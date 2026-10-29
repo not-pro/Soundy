@@ -94,10 +94,11 @@ define_class!(
         fn smoke_finish(&self, _timer: &NSTimer) {
             let count = self.ivars().menu.get().map(|menu| menu.numberOfItems()).unwrap_or(0);
             let menu = self.ivars().menu.get().expect("menu created before timer");
-            let keyboard_count = menu.itemAtIndex(3).and_then(|item| item.submenu()).map(|menu| menu.numberOfItems());
-            let mouse_count = menu.itemAtIndex(4).and_then(|item| item.submenu()).map(|menu| menu.numberOfItems());
+            let keyboard_count = menu.itemWithTitle(ns_string!("Звук клавиатуры")).and_then(|item| item.submenu()).map(|menu| menu.numberOfItems());
+            let mouse_count = menu.itemWithTitle(ns_string!("Звук мыши")).and_then(|item| item.submenu()).map(|menu| menu.numberOfItems());
+            let permission_visible = menu.itemWithTitle(ns_string!("Разрешить мониторинг ввода…")).is_some();
             let tray_icon = self.ivars().status.get().and_then(|status| status.button(self.mtm())).and_then(|button| button.image());
-            if tray_icon.is_some_and(|image| image.isTemplate() && image.size() == NSSize::new(18.0, 18.0)) && count >= 10 && keyboard_count == Some(40) && mouse_count == Some(16) {
+            if tray_icon.is_some_and(|image| image.isTemplate() && image.size() == NSSize::new(18.0, 18.0)) && count >= 10 && keyboard_count == Some(40) && mouse_count == Some(16) && permission_visible != CGPreflightListenEventAccess() {
                 println!("OK: AppKit launched, template tray icon and {count} menu items created; no input monitoring started");
             } else {
                 eprintln!("Soundy: incomplete AppKit startup");
@@ -151,9 +152,11 @@ define_class!(
 
         #[unsafe(method(permission:))]
         fn permission(&self, _sender: &NSMenuItem) {
-            if !CGPreflightListenEventAccess() { CGRequestListenEventAccess(); }
-            let url = NSURL::URLWithString(ns_string!("x-apple.systempreferences:com.apple.preference.security?Privacy_ListenEvent"));
-            if let Some(url) = url { NSWorkspace::sharedWorkspace().openURL(&url); }
+            if !CGPreflightListenEventAccess() {
+                CGRequestListenEventAccess();
+                let url = NSURL::URLWithString(ns_string!("x-apple.systempreferences:com.apple.preference.security?Privacy_ListenEvent"));
+                if let Some(url) = url { NSWorkspace::sharedWorkspace().openURL(&url); }
+            }
             self.refresh();
         }
 
@@ -243,14 +246,23 @@ impl Delegate {
         let controls = &self.ivars().controls;
         let enabled = controls.enabled.load(Ordering::Relaxed);
         self.item(menu, "Звуки включены", Some(sel!(toggle:)), 0, enabled);
-        let status = if !granted {
-            "Разрешить мониторинг ввода…"
+        if !granted {
+            self.item(
+                menu,
+                "Разрешить мониторинг ввода…",
+                Some(sel!(permission:)),
+                0,
+                false,
+            );
         } else if !listening {
-            "Повторить подключение ввода…"
-        } else {
-            "Мониторинг ввода разрешён"
-        };
-        self.item(menu, status, Some(sel!(permission:)), 0, false);
+            self.item(
+                menu,
+                "Повторить подключение ввода…",
+                Some(sel!(permission:)),
+                0,
+                false,
+            );
+        }
         if let Some(error) = input_error {
             eprintln!("Soundy: {error}");
             self.item(menu, &error, None, 0, false);
