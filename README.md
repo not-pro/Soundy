@@ -28,6 +28,22 @@ cargo run -- --sounds-dir /absolute/path/to/wav
 
 Для каждого префикса `m_tactile`, `m_thocky`, `m_topre` нужны `key1.wav`…`key8.wav` и `space.wav` с именами вида `m_tactile_key1.wav`. Чтение и декодирование завершаются до включения listener. Исходный пакет и настройки KeyBell не изменяются. Локальный импорт в Application Support и проверка всего набора из 240 WAV — следующий этап.
 
+## GitHub Actions и релизы
+
+[Workflow macOS](https://github.com/who-tf-is-nbautin/Soundy/actions/workflows/macos.yml) проверяет форматирование, Clippy и тесты, собирает и подписывает `.app` отдельно на Apple Silicon (`macos-15`) и Intel (`macos-15-intel`). Запускается для push в `main`, pull request, тегов `v*` и вручную. ZIP и SHA-256 доступны как artifacts каждого успешного build job. Проверки, которым нужны локальные WAV или Input Monitoring, в CI не запускаются.
+
+Push тега `v<версия>` дополнительно создаёт [GitHub Release](https://github.com/who-tf-is-nbautin/Soundy/releases) после успешных сборок обеих архитектур. Например, `v1.0.0` публикует `Soundy-v1.0.0-macos-arm64.zip`, `Soundy-v1.0.0-macos-x86_64.zip` и их `.sha256`. Внутри ZIP находится `Soundy.app`. Релиз с дефисом в версии помечается prerelease.
+
+Версия берётся из `Cargo.toml`; скрипт сборки выставляет её числовую часть в `Info.plist`. CI отклоняет тег, который не совпадает с версией пакета. Для следующего релиза измените `version` в `Cargo.toml`, обновите lockfile командой `cargo check`, закоммитьте изменения и отправьте новый аннотированный тег:
+
+```sh
+git push origin main
+git tag -a v1.0.1 -m "Soundy v1.0.1"
+git push origin v1.0.1
+```
+
+Опубликованные теги не перемещаются: для следующей версии создаётся новый тег. Для публикации используется стандартный `GITHUB_TOKEN`; отдельный PAT не нужен. Apple Developer ID и notarization не настроены, используется локальная ad-hoc подпись. Звуковые WAV в релиз не входят.
+
 ## Что реализовано
 
 - Passive session CGEventTap для keyDown. Ввод не блокируется и не модифицируется; autorepeat пропускается. Текст не считывается и не сохраняется.
