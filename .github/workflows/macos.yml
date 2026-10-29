@@ -55,23 +55,29 @@ jobs:
       - name: Test
         run: cargo test --locked --offline
       - name: Build and package
+        run: |
+          test "$(uname -m)" = "$ARCH"
+          sh scripts/package.sh
+      - name: Verify installer
         env:
           VERSION: ${{ steps.version.outputs.version }}
         run: |
-          test "$(uname -m)" = "$ARCH"
-          sh scripts/bundle.sh
-          lipo dist/Soundy.app/Contents/MacOS/soundy -verify_arch "$ARCH"
-          dist/Soundy.app/Contents/MacOS/soundy --version
-          dist/Soundy.app/Contents/MacOS/soundy --check
-          cd dist
-          archive="Soundy-v${VERSION}-macos-${ARCH}.zip"
-          ditto -c -k --sequesterRsrc --keepParent Soundy.app "$archive"
-          shasum -a 256 "$archive" > "$archive.sha256"
+          mountpoint="$RUNNER_TEMP/soundy-installer"
+          mkdir -p "$mountpoint"
+          hdiutil attach -readonly -nobrowse -mountpoint "$mountpoint" "dist/Soundy-v${VERSION}-macos-${ARCH}.dmg"
+          trap 'hdiutil detach "$mountpoint"' EXIT
+          test "$(readlink "$mountpoint/Applications")" = /Applications
+          codesign --verify --strict "$mountpoint/Soundy.app"
+          lipo "$mountpoint/Soundy.app/Contents/MacOS/soundy" -verify_arch "$ARCH"
+          test "$("$mountpoint/Soundy.app/Contents/MacOS/soundy" --version)" = "Soundy $VERSION"
+          (cd "$mountpoint/Soundy.app/Contents/Resources/Sounds" && shasum -a 256 -c manifest.sha256 > /dev/null)
+          "$mountpoint/Soundy.app/Contents/MacOS/soundy" --check
       - name: Upload build
         uses: actions/upload-artifact@v7.0.2
         with:
           name: Soundy-macos-${{ matrix.arch }}
           path: |
+            dist/*.dmg
             dist/*.zip
             dist/*.sha256
           if-no-files-found: error
@@ -103,7 +109,7 @@ jobs:
           if [[ "$GITHUB_REF_NAME" == *-* ]]; then
             options+=(--prerelease)
           fi
-          gh release create "$GITHUB_REF_NAME" *.zip *.sha256 \
+          gh release create "$GITHUB_REF_NAME" *.dmg *.zip *.sha256 \
             --verify-tag --generate-notes --title "Soundy $GITHUB_REF_NAME" \
-            --notes "Keyboard and mouse sounds for macOS 13+. Includes all 240 WAV files, 40 keyboard profiles and 15 mouse sound pairs. Choose arm64 for Apple Silicon or x86_64 for Intel. The app has an ad-hoc signature and is not notarized." \
+            --notes "Keyboard and mouse sounds for macOS 13+. Open the DMG and drag Soundy into Applications. Includes all 240 WAV files, 40 keyboard profiles and 15 mouse sound pairs. Choose arm64 for Apple Silicon or x86_64 for Intel. ZIP archives are also available. The app has an ad-hoc signature and is not notarized." \
             "${options[@]}"
