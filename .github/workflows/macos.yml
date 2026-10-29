@@ -62,6 +62,7 @@ jobs:
           sh scripts/bundle.sh
           lipo dist/Soundy.app/Contents/MacOS/soundy -verify_arch "$ARCH"
           dist/Soundy.app/Contents/MacOS/soundy --version
+          dist/Soundy.app/Contents/MacOS/soundy --check
           cd dist
           archive="Soundy-v${VERSION}-macos-${ARCH}.zip"
           ditto -c -k --sequesterRsrc --keepParent Soundy.app "$archive"
@@ -104,5 +105,5 @@ jobs:
           fi
           gh release create "$GITHUB_REF_NAME" *.zip *.sha256 \
             --verify-tag --generate-notes --title "Soundy $GITHUB_REF_NAME" \
-            --notes "macOS 13+. Choose arm64 for Apple Silicon or x86_64 for Intel. WAV files are not included; this prototype requires an installed KeyBell or a local sound directory. The app has an ad-hoc signature and is not notarized." \
+            --notes "Keyboard and mouse sounds for macOS 13+. Includes all 240 WAV files, 40 keyboard profiles and 15 mouse sound pairs. Choose arm64 for Apple Silicon or x86_64 for Intel. The app has an ad-hoc signature and is not notarized." \
             "${options[@]}"

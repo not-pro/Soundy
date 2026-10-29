@@ -20,7 +20,7 @@ use objc2_foundation::{
 
 use crate::{
     audio::{Command, Controls, Worker},
-    catalog::Profile,
+    catalog::{MouseProfile, Profile},
     input::InputTap,
 };
 
@@ -53,7 +53,7 @@ define_class!(
             let status = NSStatusBar::systemStatusBar().statusItemWithLength(-1.0);
             if let Some(button) = status.button(mtm) {
                 button.setTitle(ns_string!("Soundy"));
-                button.setToolTip(Some(ns_string!("Soundy — звуки клавиатуры")));
+                button.setToolTip(Some(ns_string!("Soundy — звуки клавиатуры и мыши")));
             }
             status.setMenu(Some(&menu));
             let _ = self.ivars().status.set(status);
@@ -86,7 +86,10 @@ define_class!(
         #[unsafe(method(smokeFinish:))]
         fn smoke_finish(&self, _timer: &NSTimer) {
             let count = self.ivars().menu.get().map(|menu| menu.numberOfItems()).unwrap_or(0);
-            if self.ivars().status.get().is_some() && count >= 10 {
+            let menu = self.ivars().menu.get().expect("menu created before timer");
+            let keyboard_count = menu.itemAtIndex(3).and_then(|item| item.submenu()).map(|menu| menu.numberOfItems());
+            let mouse_count = menu.itemAtIndex(4).and_then(|item| item.submenu()).map(|menu| menu.numberOfItems());
+            if self.ivars().status.get().is_some() && count >= 10 && keyboard_count == Some(40) && mouse_count == Some(16) {
                 println!("OK: AppKit launched, status item and {count} menu items created; no input monitoring started");
             } else {
                 eprintln!("Soundy: incomplete AppKit startup");
@@ -107,11 +110,23 @@ define_class!(
         #[unsafe(method(selectProfile:))]
         fn select_profile(&self, sender: &NSMenuItem) {
             let profile = Profile::from_index(sender.tag().max(0) as usize);
-            self.ivars().controls.profile.store(profile as u8, Ordering::Relaxed);
-            self.ivars().defaults.setInteger_forKey(profile as isize, ns_string!("profile"));
+            self.ivars().controls.profile.store(profile.0, Ordering::Relaxed);
+            self.ivars().defaults.setInteger_forKey(isize::from(profile.0), ns_string!("profile"));
             self.play_preview();
             self.refresh();
         }
+
+        #[unsafe(method(selectMouse:))]
+        fn select_mouse(&self, sender: &NSMenuItem) {
+            let profile = MouseProfile::from_index(sender.tag().max(0) as usize);
+            self.ivars().controls.mouse_profile.store(profile.0, Ordering::Relaxed);
+            self.ivars().defaults.setInteger_forKey(isize::from(profile.0), ns_string!("mouseProfile"));
+            self.play_mouse_preview();
+            self.refresh();
+        }
+
+        #[unsafe(method(previewMouse:))]
+        fn preview_mouse(&self, _sender: &NSMenuItem) { self.play_mouse_preview(); }
 
         #[unsafe(method(selectVolume:))]
         fn select_volume(&self, sender: &NSMenuItem) {
@@ -148,6 +163,12 @@ impl Delegate {
         }
     }
 
+    fn play_mouse_preview(&self) {
+        if let Some(worker) = self.ivars().worker.borrow().as_ref() {
+            let _ = worker.sender.try_send(Command::PreviewMouse);
+        }
+    }
+
     fn new(
         mtm: MainThreadMarker,
         controls: Arc<Controls>,
@@ -162,8 +183,14 @@ impl Delegate {
             );
         }
         controls.profile.store(
-            Profile::from_index(defaults.integerForKey(ns_string!("profile")).max(0) as usize)
-                as u8,
+            Profile::from_index(defaults.integerForKey(ns_string!("profile")).max(0) as usize).0,
+            Ordering::Relaxed,
+        );
+        controls.mouse_profile.store(
+            MouseProfile::from_index(
+                defaults.integerForKey(ns_string!("mouseProfile")).max(0) as usize
+            )
+            .0,
             Ordering::Relaxed,
         );
         if defaults.objectForKey(ns_string!("volume")).is_some() {
@@ -211,7 +238,7 @@ impl Delegate {
         let status = if !granted {
             "Разрешить мониторинг ввода…"
         } else if !listening {
-            "Повторить подключение клавиатуры…"
+            "Повторить подключение ввода…"
         } else {
             "Мониторинг ввода разрешён"
         };
@@ -221,22 +248,30 @@ impl Delegate {
             self.item(menu, &error, None, 0, false);
         }
         menu.addItem(&NSMenuItem::separatorItem(self.mtm()));
-        self.item(menu, "Звук клавиатуры", None, 0, false);
-        for profile in Profile::ALL {
+        let keyboard_menu = self.submenu(menu, "Звук клавиатуры");
+        for profile in Profile::all() {
             self.item(
-                menu,
+                &keyboard_menu,
                 profile.name(),
                 Some(sel!(selectProfile:)),
-                profile as isize,
-                controls.profile.load(Ordering::Relaxed) == profile as u8,
+                isize::from(profile.0),
+                controls.profile.load(Ordering::Relaxed) == profile.0,
             );
         }
+        let mouse_menu = self.submenu(menu, "Звук мыши");
+        for profile in MouseProfile::all() {
+            self.item(
+                &mouse_menu,
+                &profile.name(),
+                Some(sel!(selectMouse:)),
+                isize::from(profile.0),
+                controls.mouse_profile.load(Ordering::Relaxed) == profile.0,
+            );
+        }
+        self.item(menu, "Послушать мышь", Some(sel!(previewMouse:)), 0, false);
         self.item(menu, "Послушать звук", Some(sel!(preview:)), 0, false);
         menu.addItem(&NSMenuItem::separatorItem(self.mtm()));
-        let volume_item = self.item(menu, "Громкость", None, 0, false);
-        volume_item.setEnabled(true);
-        let volume_menu = NSMenu::initWithTitle(NSMenu::alloc(self.mtm()), ns_string!("Громкость"));
-        volume_menu.setAutoenablesItems(false);
+        let volume_menu = self.submenu(menu, "Громкость");
         for volume in [0, 10, 25, 50, 75, 100] {
             self.item(
                 &volume_menu,
@@ -246,7 +281,6 @@ impl Delegate {
                 controls.volume.load(Ordering::Relaxed) as isize == volume,
             );
         }
-        volume_item.setSubmenu(Some(&volume_menu));
         menu.addItem(&NSMenuItem::separatorItem(self.mtm()));
         self.item(menu, "Завершить Soundy", Some(sel!(quit:)), 0, false);
         if let Some(button) = self
@@ -263,6 +297,15 @@ impl Delegate {
                 "Soundy · пауза"
             }));
         }
+    }
+
+    fn submenu(&self, menu: &NSMenu, title: &str) -> Retained<NSMenu> {
+        let item = self.item(menu, title, None, 0, false);
+        item.setEnabled(true);
+        let submenu = NSMenu::initWithTitle(NSMenu::alloc(self.mtm()), &NSString::from_str(title));
+        submenu.setAutoenablesItems(false);
+        item.setSubmenu(Some(&submenu));
+        submenu
     }
 
     fn item(

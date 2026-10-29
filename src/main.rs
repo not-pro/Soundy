@@ -14,9 +14,14 @@ compile_error!("Soundy currently supports macOS 13+ only");
 use std::{path::PathBuf, sync::Arc, time::Duration};
 
 fn main() {
-    let mut root = PathBuf::from("/Applications/KeyBell.app/Contents/Resources");
+    let mut root = std::env::current_exe()
+        .ok()
+        .and_then(|exe| exe.parent().map(|dir| dir.join("../Resources/Sounds")))
+        .filter(|dir| dir.is_dir())
+        .unwrap_or_else(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("assets/sounds"));
     let mut check = false;
     let mut preview = false;
+    let mut preview_mouse = false;
     let mut smoke_test = false;
     let mut arguments = std::env::args_os().skip(1);
     while let Some(argument) = arguments.next() {
@@ -29,6 +34,7 @@ fn main() {
             }
             Some("--check") => check = true,
             Some("--preview") => preview = true,
+            Some("--preview-mouse") => preview_mouse = true,
             Some("--smoke-test") => smoke_test = true,
             Some("--version") => {
                 println!("Soundy {}", env!("CARGO_PKG_VERSION"));
@@ -36,7 +42,7 @@ fn main() {
             }
             Some("--help" | "-h") => {
                 println!(
-                    "Soundy — звуки клавиатуры для macOS\n\n  --sounds-dir PATH  Каталог WAV (по умолчанию KeyBell.app)\n  --check            Проверить 27 WAV без звука и мониторинга ввода\n  --preview          Воспроизвести один звук и завершить работу\n  --version          Версия\n"
+                    "Soundy — звуки клавиатуры и мыши для macOS\n\n  --sounds-dir PATH  Свой каталог WAV (по умолчанию встроенные звуки)\n  --check            Проверить 240 WAV без звука и мониторинга ввода\n  --preview          Воспроизвести один звук и завершить работу\n  --preview-mouse    Воспроизвести клик мыши и завершить работу\n  --version          Версия\n"
                 );
                 return;
             }
@@ -48,11 +54,19 @@ fn main() {
     }
     let result = if check {
         audio::check(&root).map(|()| {
-            println!("OK: 27 WAV decoded, 3 keyboard profiles; no input monitoring started")
+            println!("OK: 240 WAV decoded, 40 keyboard profiles, 15 mouse pairs; no input monitoring started")
         })
-    } else if preview {
-        audio::Worker::start(&root, Arc::new(audio::Controls::default())).map(|worker| {
-            let _ = worker.sender.send(audio::Command::Preview);
+    } else if preview || preview_mouse {
+        let controls = Arc::new(audio::Controls::default());
+        controls
+            .mouse_profile
+            .store(1, std::sync::atomic::Ordering::Relaxed);
+        audio::Worker::start(&root, controls).map(|worker| {
+            let _ = worker.sender.send(if preview_mouse {
+                audio::Command::PreviewMouse
+            } else {
+                audio::Command::Preview
+            });
             std::thread::sleep(Duration::from_secs(1));
         })
     } else {
@@ -60,7 +74,7 @@ fn main() {
     };
     if let Err(error) = result {
         eprintln!("Soundy: {error}");
-        if !check && !preview {
+        if !check && !preview && !preview_mouse {
             ui::show_error(&error);
         }
         std::process::exit(1);

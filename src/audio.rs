@@ -20,11 +20,12 @@ use objc2_avf_audio::{
 };
 use objc2_foundation::{NSString, NSURL};
 
-use crate::catalog::{self, Profile};
+use crate::catalog::{self, MouseProfile, Profile};
 
 pub struct Controls {
     pub enabled: AtomicBool,
     pub profile: AtomicU8,
+    pub mouse_profile: AtomicU8,
     pub volume: AtomicU8,
 }
 
@@ -33,14 +34,24 @@ impl Default for Controls {
         Self {
             enabled: AtomicBool::new(true),
             profile: AtomicU8::new(0),
+            mouse_profile: AtomicU8::new(0),
             volume: AtomicU8::new(25),
         }
     }
 }
 
 pub enum Command {
-    Key { keycode: u16, at: Instant },
+    Key {
+        keycode: u16,
+        pressed: bool,
+        at: Instant,
+    },
+    Mouse {
+        pressed: bool,
+        at: Instant,
+    },
     Preview,
+    PreviewMouse,
     Stop,
 }
 
@@ -74,28 +85,34 @@ impl Worker {
                         return;
                     }
                     while let Ok(command) = receiver.recv() {
-                        autoreleasepool(|_| match command {
-                            Command::Stop => {}
-                            Command::Key { keycode, at }
-                                if controls.enabled.load(Ordering::Relaxed)
-                                    && at.elapsed() < Duration::from_millis(100) =>
-                            {
-                                let profile = Profile::from_index(
-                                    controls.profile.load(Ordering::Relaxed).into(),
-                                );
-                                audio.play(
-                                    profile,
+                        autoreleasepool(|_| {
+                            let profile = Profile::from_index(
+                                controls.profile.load(Ordering::Relaxed).into(),
+                            );
+                            let mouse = MouseProfile::from_index(
+                                controls.mouse_profile.load(Ordering::Relaxed).into(),
+                            );
+                            let active = controls.enabled.load(Ordering::Relaxed);
+                            let index = match command {
+                                Command::Key {
                                     keycode,
-                                    controls.volume.load(Ordering::Relaxed),
-                                );
+                                    pressed,
+                                    at,
+                                } if active && at.elapsed() < Duration::from_millis(100) => {
+                                    profile.sample_index(keycode, pressed)
+                                }
+                                Command::Mouse { pressed, at }
+                                    if active && at.elapsed() < Duration::from_millis(100) =>
+                                {
+                                    mouse.sample_index(pressed)
+                                }
+                                Command::Preview => profile.sample_index(0, true),
+                                Command::PreviewMouse => mouse.sample_index(true),
+                                _ => None,
+                            };
+                            if let Some(index) = index {
+                                audio.play(index, controls.volume.load(Ordering::Relaxed));
                             }
-                            Command::Preview => {
-                                let profile = Profile::from_index(
-                                    controls.profile.load(Ordering::Relaxed).into(),
-                                );
-                                audio.play(profile, 0, controls.volume.load(Ordering::Relaxed));
-                            }
-                            _ => {}
                         });
                         if matches!(command, Command::Stop) {
                             break;
@@ -137,13 +154,19 @@ struct Voice {
 struct Sample {
     buffer: Retained<AVAudioPCMBuffer>,
     duration: Duration,
-    voices: Vec<Voice>,
+    pool: usize,
     last_play: Option<Instant>,
+}
+
+struct VoicePool {
+    format: Retained<objc2_avf_audio::AVAudioFormat>,
+    voices: Vec<Voice>,
 }
 
 struct Player {
     engine: Retained<AVAudioEngine>,
-    samples: Vec<Vec<Sample>>,
+    samples: Vec<Sample>,
+    pools: Vec<VoicePool>,
     _limiter: Retained<AVAudioUnitEffect>,
 }
 
@@ -168,38 +191,43 @@ impl Player {
             engine.connect_to_format(&mixer, &limiter, None);
             engine.connect_to_format(&limiter, &engine.outputNode(), None);
             let mut samples = Vec::new();
-            for profile in Profile::ALL {
-                let mut bank = Vec::new();
-                for path in profile.files(root) {
-                    let buffer = read_buffer(&path)?;
-                    let format = buffer.format();
-                    let duration = Duration::from_secs_f64(
-                        f64::from(buffer.frameLength()) / format.sampleRate(),
-                    );
-                    let voices = (0..6)
-                        .map(|_| {
-                            let node = AVAudioPlayerNode::new();
-                            engine.attachNode(&node);
-                            engine.connect_to_format(&node, &mixer, Some(&format));
-                            Voice {
-                                node,
-                                busy_until: Instant::now(),
-                            }
-                        })
-                        .collect();
-                    bank.push(Sample {
-                        buffer,
-                        duration,
-                        voices,
-                        last_play: None,
-                    });
-                }
-                samples.push(bank);
+            let mut pools: Vec<VoicePool> = Vec::new();
+            for name in catalog::files() {
+                let buffer = read_buffer(&root.join(name))?;
+                let format = buffer.format();
+                let duration =
+                    Duration::from_secs_f64(f64::from(buffer.frameLength()) / format.sampleRate());
+                // ponytail: six shared voices per PCM format; increase if dense bursts clip tails.
+                let pool = match pools.iter().position(|pool| pool.format.isEqual(&format)) {
+                    Some(index) => index,
+                    None => {
+                        let voices = (0..6)
+                            .map(|_| {
+                                let node = AVAudioPlayerNode::new();
+                                engine.attachNode(&node);
+                                engine.connect_to_format(&node, &mixer, Some(&format));
+                                Voice {
+                                    node,
+                                    busy_until: Instant::now(),
+                                }
+                            })
+                            .collect();
+                        pools.push(VoicePool { format, voices });
+                        pools.len() - 1
+                    }
+                };
+                samples.push(Sample {
+                    buffer,
+                    duration,
+                    pool,
+                    last_play: None,
+                });
             }
             engine.prepare();
             Ok(Self {
                 engine,
                 samples,
+                pools,
                 _limiter: limiter,
             })
         }
@@ -210,12 +238,12 @@ impl Player {
             .map_err(|e| format!("Не удалось запустить аудиовыход: {e}"))
     }
 
-    fn play(&mut self, profile: Profile, keycode: u16, volume: u8) {
+    fn play(&mut self, index: usize, volume: u8) {
         if volume == 0 {
             return;
         }
         let now = Instant::now();
-        let sample = &mut self.samples[profile as usize][profile.sample_index(keycode)];
+        let sample = &mut self.samples[index];
         // ponytail: per-file 15ms gate; refine its scope after the full cache key is recovered.
         if sample
             .last_play
@@ -223,7 +251,7 @@ impl Player {
         {
             return;
         }
-        let voice = sample
+        let voice = self.pools[sample.pool]
             .voices
             .iter_mut()
             .min_by_key(|voice| voice.busy_until)
@@ -298,10 +326,8 @@ fn read_buffer(path: &Path) -> Result<Retained<AVAudioPCMBuffer>, String> {
 pub fn check(root: &Path) -> Result<(), String> {
     catalog::validate(root)?;
     autoreleasepool(|_| {
-        for profile in Profile::ALL {
-            for file in profile.files(root) {
-                let _ = read_buffer(&file)?;
-            }
+        for name in catalog::files() {
+            let _ = read_buffer(&root.join(name))?;
         }
         Ok(())
     })

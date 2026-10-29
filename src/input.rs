@@ -38,13 +38,24 @@ impl InputTap {
                 CGEventTapLocation::SessionEventTap,
                 CGEventTapPlacement::TailAppendEventTap,
                 CGEventTapOptions::ListenOnly,
-                1 << CGEventType::KeyDown.0,
+                [
+                    CGEventType::KeyDown,
+                    CGEventType::KeyUp,
+                    CGEventType::LeftMouseDown,
+                    CGEventType::LeftMouseUp,
+                    CGEventType::RightMouseDown,
+                    CGEventType::RightMouseUp,
+                    CGEventType::OtherMouseDown,
+                    CGEventType::OtherMouseUp,
+                ]
+                .into_iter()
+                .fold(0, |mask, kind| mask | (1 << kind.0)),
                 Some(callback),
                 (&mut *context as *mut Context).cast(),
             )
         }
         .ok_or(
-            "Не удалось создать обработчик клавиатуры. Перезапустите Soundy после выдачи доступа.",
+            "Не удалось подключить клавиатуру и мышь. Перезапустите Soundy после выдачи доступа.",
         )?;
         context.port.set(Some(NonNull::from(&*port)));
         let source = CFMachPort::new_run_loop_source(None, Some(&port), 0)
@@ -91,7 +102,7 @@ unsafe extern "C-unwind" fn callback(
                 CGEvent::tap_enable(unsafe { port.as_ref() }, true);
             }
         }
-    } else if event_type == CGEventType::KeyDown {
+    } else if event_type == CGEventType::KeyDown || event_type == CGEventType::KeyUp {
         let event_ref = Some(unsafe { event.as_ref() });
         if CGEvent::integer_value_field(event_ref, CGEventField::KeyboardEventAutorepeat) == 0 {
             let keycode =
@@ -100,10 +111,59 @@ unsafe extern "C-unwind" fn callback(
                 // A full queue drops a sound, never stalls keyboard input.
                 let _ = context.sender.try_send(Command::Key {
                     keycode,
+                    pressed: event_type == CGEventType::KeyDown,
                     at: Instant::now(),
                 });
             }
         }
+    } else if let Some(pressed) = mouse_pressed(event_type) {
+        let _ = context.sender.try_send(Command::Mouse {
+            pressed,
+            at: Instant::now(),
+        });
     }
     event.as_ptr()
+}
+
+fn mouse_pressed(kind: CGEventType) -> Option<bool> {
+    match kind {
+        CGEventType::LeftMouseDown | CGEventType::RightMouseDown | CGEventType::OtherMouseDown => {
+            Some(true)
+        }
+        CGEventType::LeftMouseUp | CGEventType::RightMouseUp | CGEventType::OtherMouseUp => {
+            Some(false)
+        }
+        _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn mouse_buttons_sound_on_press_and_release_only() {
+        for kind in [
+            CGEventType::LeftMouseDown,
+            CGEventType::RightMouseDown,
+            CGEventType::OtherMouseDown,
+        ] {
+            assert_eq!(mouse_pressed(kind), Some(true));
+        }
+        for kind in [
+            CGEventType::LeftMouseUp,
+            CGEventType::RightMouseUp,
+            CGEventType::OtherMouseUp,
+        ] {
+            assert_eq!(mouse_pressed(kind), Some(false));
+        }
+        for kind in [
+            CGEventType::KeyDown,
+            CGEventType::MouseMoved,
+            CGEventType::ScrollWheel,
+            CGEventType::LeftMouseDragged,
+        ] {
+            assert_eq!(mouse_pressed(kind), None);
+        }
+    }
 }
