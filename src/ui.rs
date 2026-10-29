@@ -1,5 +1,5 @@
 use std::{
-    cell::{OnceCell, RefCell},
+    cell::{Cell, OnceCell, RefCell},
     path::Path,
     sync::{Arc, atomic::Ordering},
 };
@@ -21,11 +21,13 @@ use objc2_foundation::{
 use crate::{
     audio::{Command, Controls, Worker},
     catalog::{MouseProfile, Profile},
+    i18n::{Language, Text},
     input::InputTap,
 };
 
 struct State {
     controls: Arc<Controls>,
+    language: Cell<Language>,
     worker: RefCell<Option<Worker>>,
     tap: RefCell<Option<InputTap>>,
     status: OnceCell<Retained<NSStatusItem>>,
@@ -60,7 +62,7 @@ define_class!(
                 image.setTemplate(true);
                 button.setImage(Some(&image));
                 button.setAccessibilityLabel(Some(ns_string!("Soundy")));
-                button.setToolTip(Some(ns_string!("Soundy — звуки клавиатуры и мыши")));
+                button.setToolTip(Some(&NSString::from_str(self.ivars().language.get().text(Text::Tooltip))));
             }
             status.setMenu(Some(&menu));
             let _ = self.ivars().status.set(status);
@@ -92,18 +94,38 @@ define_class!(
     impl Delegate {
         #[unsafe(method(smokeFinish:))]
         fn smoke_finish(&self, _timer: &NSTimer) {
-            let count = self.ivars().menu.get().map(|menu| menu.numberOfItems()).unwrap_or(0);
             let menu = self.ivars().menu.get().expect("menu created before timer");
-            let keyboard_count = menu.itemWithTitle(ns_string!("Звук клавиатуры")).and_then(|item| item.submenu()).map(|menu| menu.numberOfItems());
-            let mouse_count = menu.itemWithTitle(ns_string!("Звук мыши")).and_then(|item| item.submenu()).map(|menu| menu.numberOfItems());
-            let permission_visible = menu.itemWithTitle(ns_string!("Разрешить мониторинг ввода…")).is_some();
-            let tray_icon = self.ivars().status.get().and_then(|status| status.button(self.mtm())).and_then(|button| button.image());
-            if tray_icon.is_some_and(|image| image.isTemplate() && image.size() == NSSize::new(18.0, 18.0)) && count >= 10 && keyboard_count == Some(40) && mouse_count == Some(16) && permission_visible != CGPreflightListenEventAccess() {
-                println!("OK: AppKit launched, template tray icon and {count} menu items created; no input monitoring started");
-            } else {
-                eprintln!("Soundy: incomplete AppKit startup");
-                std::process::exit(1);
+            for language in Language::ALL {
+                let title = self.ivars().language.get().text(Text::LanguageMenu);
+                let language_menu = menu.itemWithTitle(&NSString::from_str(title)).unwrap().submenu().unwrap();
+                self.select_language(sel!(selectLanguage:), &language_menu.itemAtIndex(language as isize).unwrap());
+                assert_eq!(Language::load(&self.ivars().defaults), language, "language preference must persist");
+                let submenu = |text| menu.itemWithTitle(&NSString::from_str(language.text(text))).unwrap().submenu().unwrap();
+                assert_eq!(submenu(Text::KeyboardSound).numberOfItems(), 40);
+                let mouse_menu = submenu(Text::MouseSound);
+                assert_eq!(mouse_menu.numberOfItems(), 16);
+                for index in [0, 1, 15] {
+                    assert_eq!(mouse_menu.itemAtIndex(index).unwrap().title().to_string(), language.mouse_name(index as u8));
+                }
+                let language_menu = submenu(Text::LanguageMenu);
+                assert_eq!(language_menu.numberOfItems(), 3);
+                for option in Language::ALL {
+                    let item = language_menu.itemAtIndex(option as isize).unwrap();
+                    assert_eq!(item.title().to_string(), option.name());
+                    assert_eq!(item.state(), if option == language { 1 } else { 0 });
+                }
+                for text in [Text::SoundsEnabled, Text::PreviewMouse, Text::PreviewKeyboard, Text::Volume, Text::Quit] {
+                    assert!(menu.itemWithTitle(&NSString::from_str(language.text(text))).is_some());
+                }
+                let permission_visible = menu.itemWithTitle(&NSString::from_str(language.text(Text::AllowInput))).is_some();
+                assert_ne!(permission_visible, CGPreflightListenEventAccess());
+                let button = self.ivars().status.get().unwrap().button(self.mtm()).unwrap();
+                let image = button.image().unwrap();
+                assert!(image.isTemplate() && image.size() == NSSize::new(18.0, 18.0));
+                assert_eq!(button.toolTip().unwrap().to_string(), language.text(Text::InputUnavailable));
+                println!("OK: {} menu, language selection and saved preference; no input monitoring started", language.code());
             }
+            self.ivars().defaults.removePersistentDomainForName(&smoke_defaults_name());
             NSApplication::sharedApplication(self.mtm()).terminate(None);
         }
 
@@ -160,6 +182,15 @@ define_class!(
             self.refresh();
         }
 
+        #[unsafe(method(selectLanguage:))]
+        fn select_language(&self, sender: &NSMenuItem) {
+            if let Some(&language) = usize::try_from(sender.tag()).ok().and_then(|index| Language::ALL.get(index)) {
+                self.ivars().language.set(language);
+                language.save(&self.ivars().defaults);
+                self.refresh();
+            }
+        }
+
         #[unsafe(method(quit:))]
         fn quit(&self, _sender: &NSMenuItem) {
             NSApplication::sharedApplication(self.mtm()).terminate(None);
@@ -185,8 +216,14 @@ impl Delegate {
         controls: Arc<Controls>,
         worker: Worker,
         smoke_test: bool,
+        language: Language,
     ) -> Retained<Self> {
-        let defaults = NSUserDefaults::standardUserDefaults();
+        let defaults = if smoke_test {
+            NSUserDefaults::initWithSuiteName(NSUserDefaults::alloc(), Some(&smoke_defaults_name()))
+                .expect("smoke-test defaults suite")
+        } else {
+            NSUserDefaults::standardUserDefaults()
+        };
         if defaults.objectForKey(ns_string!("enabled")).is_some() {
             controls.enabled.store(
                 defaults.boolForKey(ns_string!("enabled")),
@@ -212,6 +249,7 @@ impl Delegate {
         }
         let this = Self::alloc(mtm).set_ivars(State {
             controls,
+            language: Cell::new(language),
             defaults,
             smoke_test,
             worker: RefCell::new(Some(worker)),
@@ -223,6 +261,7 @@ impl Delegate {
     }
 
     fn refresh(&self) {
+        let language = self.ivars().language.get();
         let granted = CGPreflightListenEventAccess();
         let mut tap = self.ivars().tap.borrow_mut();
         if !granted || tap.as_ref().is_some_and(|tap| !tap.is_enabled()) {
@@ -231,7 +270,7 @@ impl Delegate {
         let mut input_error = None;
         if granted && tap.is_none() && !self.ivars().smoke_test {
             if let Some(worker) = self.ivars().worker.borrow().as_ref() {
-                match InputTap::start(worker.sender.clone()) {
+                match InputTap::start(worker.sender.clone(), language) {
                     Ok(new_tap) => *tap = Some(new_tap),
                     Err(error) => input_error = Some(error),
                 }
@@ -245,11 +284,17 @@ impl Delegate {
         menu.removeAllItems();
         let controls = &self.ivars().controls;
         let enabled = controls.enabled.load(Ordering::Relaxed);
-        self.item(menu, "Звуки включены", Some(sel!(toggle:)), 0, enabled);
+        self.item(
+            menu,
+            language.text(Text::SoundsEnabled),
+            Some(sel!(toggle:)),
+            0,
+            enabled,
+        );
         if !granted {
             self.item(
                 menu,
-                "Разрешить мониторинг ввода…",
+                language.text(Text::AllowInput),
                 Some(sel!(permission:)),
                 0,
                 false,
@@ -257,7 +302,7 @@ impl Delegate {
         } else if !listening {
             self.item(
                 menu,
-                "Повторить подключение ввода…",
+                language.text(Text::RetryInput),
                 Some(sel!(permission:)),
                 0,
                 false,
@@ -268,7 +313,7 @@ impl Delegate {
             self.item(menu, &error, None, 0, false);
         }
         menu.addItem(&NSMenuItem::separatorItem(self.mtm()));
-        let keyboard_menu = self.submenu(menu, "Звук клавиатуры");
+        let keyboard_menu = self.submenu(menu, language.text(Text::KeyboardSound));
         for profile in Profile::all() {
             self.item(
                 &keyboard_menu,
@@ -278,20 +323,32 @@ impl Delegate {
                 controls.profile.load(Ordering::Relaxed) == profile.0,
             );
         }
-        let mouse_menu = self.submenu(menu, "Звук мыши");
+        let mouse_menu = self.submenu(menu, language.text(Text::MouseSound));
         for profile in MouseProfile::all() {
             self.item(
                 &mouse_menu,
-                &profile.name(),
+                &language.mouse_name(profile.0),
                 Some(sel!(selectMouse:)),
                 isize::from(profile.0),
                 controls.mouse_profile.load(Ordering::Relaxed) == profile.0,
             );
         }
-        self.item(menu, "Послушать мышь", Some(sel!(previewMouse:)), 0, false);
-        self.item(menu, "Послушать звук", Some(sel!(preview:)), 0, false);
+        self.item(
+            menu,
+            language.text(Text::PreviewMouse),
+            Some(sel!(previewMouse:)),
+            0,
+            false,
+        );
+        self.item(
+            menu,
+            language.text(Text::PreviewKeyboard),
+            Some(sel!(preview:)),
+            0,
+            false,
+        );
         menu.addItem(&NSMenuItem::separatorItem(self.mtm()));
-        let volume_menu = self.submenu(menu, "Громкость");
+        let volume_menu = self.submenu(menu, language.text(Text::Volume));
         for volume in [0, 10, 25, 50, 75, 100] {
             self.item(
                 &volume_menu,
@@ -301,8 +358,18 @@ impl Delegate {
                 controls.volume.load(Ordering::Relaxed) as isize == volume,
             );
         }
+        let language_menu = self.submenu(menu, language.text(Text::LanguageMenu));
+        for option in Language::ALL {
+            self.item(
+                &language_menu,
+                option.name(),
+                Some(sel!(selectLanguage:)),
+                option as isize,
+                option == language,
+            );
+        }
         menu.addItem(&NSMenuItem::separatorItem(self.mtm()));
-        self.item(menu, "Завершить Soundy", Some(sel!(quit:)), 0, false);
+        self.item(menu, language.text(Text::Quit), Some(sel!(quit:)), 0, false);
         if let Some(button) = self
             .ivars()
             .status
@@ -317,11 +384,11 @@ impl Delegate {
                 " Ⅱ"
             }));
             button.setToolTip(Some(&NSString::from_str(if !granted || !listening {
-                "Soundy — мониторинг ввода недоступен"
+                language.text(Text::InputUnavailable)
             } else if enabled {
-                "Soundy — звуки клавиатуры и мыши"
+                language.text(Text::Tooltip)
             } else {
-                "Soundy — пауза"
+                language.text(Text::Paused)
             })));
         }
     }
@@ -362,23 +429,28 @@ impl Delegate {
     }
 }
 
-pub fn run(root: &Path, smoke_test: bool) -> Result<(), String> {
-    let mtm = MainThreadMarker::new().ok_or("Soundy должен запускаться в основном потоке")?;
+pub fn run(root: &Path, smoke_test: bool, language: Language) -> Result<(), String> {
+    let mtm = MainThreadMarker::new().ok_or(language.text(Text::MainThreadRequired))?;
     let app = NSApplication::sharedApplication(mtm);
     app.setActivationPolicy(NSApplicationActivationPolicy::Accessory);
     let controls = Arc::new(Controls::default());
-    let worker = Worker::start(root, controls.clone())?;
-    let delegate = Delegate::new(mtm, controls, worker, smoke_test);
+    let worker = Worker::start(root, controls.clone(), language)?;
+    let delegate = Delegate::new(mtm, controls, worker, smoke_test, language);
     app.setDelegate(Some(ProtocolObject::from_ref(&*delegate)));
     app.run();
     Ok(())
 }
 
-pub fn show_error(error: &str) {
+pub fn show_error(error: &str, language: Language) {
     if let Some(mtm) = MainThreadMarker::new() {
         let alert = NSAlert::new(mtm);
-        alert.setMessageText(ns_string!("Не удалось запустить Soundy"));
+        alert.setMessageText(&NSString::from_str(language.text(Text::StartFailed)));
+        alert.addButtonWithTitle(&NSString::from_str(language.text(Text::OK)));
         alert.setInformativeText(&NSString::from_str(error));
         alert.runModal();
     }
+}
+
+fn smoke_defaults_name() -> Retained<NSString> {
+    NSString::from_str(&format!("dev.soundy.smoke.{}", std::process::id()))
 }

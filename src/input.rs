@@ -8,7 +8,10 @@ use objc2_core_graphics::{
     CGEventTapPlacement, CGEventTapProxy, CGEventType, CGPreflightListenEventAccess,
 };
 
-use crate::audio::Command;
+use crate::{
+    audio::Command,
+    i18n::{Language, Text},
+};
 
 struct Context {
     sender: SyncSender<Command>,
@@ -23,9 +26,9 @@ pub struct InputTap {
 }
 
 impl InputTap {
-    pub fn start(sender: SyncSender<Command>) -> Result<Self, String> {
+    pub fn start(sender: SyncSender<Command>, language: Language) -> Result<Self, String> {
         if !CGPreflightListenEventAccess() {
-            return Err("Требуется доступ к мониторингу ввода".into());
+            return Err(language.text(Text::InputPermissionRequired).into());
         }
         let mut context = Box::new(Context {
             sender,
@@ -55,13 +58,11 @@ impl InputTap {
                 (&mut *context as *mut Context).cast(),
             )
         }
-        .ok_or(
-            "Не удалось подключить клавиатуру и мышь. Перезапустите Soundy после выдачи доступа.",
-        )?;
+        .ok_or(language.text(Text::InputConnectionFailed))?;
         context.port.set(Some(NonNull::from(&*port)));
         let source = CFMachPort::new_run_loop_source(None, Some(&port), 0)
-            .ok_or("Не удалось создать источник событий клавиатуры")?;
-        let run_loop = CFRunLoop::main().ok_or("Основной run loop недоступен")?;
+            .ok_or(language.text(Text::InputSourceFailed))?;
+        let run_loop = CFRunLoop::main().ok_or(language.text(Text::MainLoopUnavailable))?;
         // SAFETY: This is a system-owned immutable CoreFoundation mode constant.
         run_loop.add_source(Some(&source), unsafe { kCFRunLoopCommonModes });
         CGEvent::tap_enable(&port, true);

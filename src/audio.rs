@@ -20,7 +20,10 @@ use objc2_avf_audio::{
 };
 use objc2_foundation::{NSString, NSURL};
 
-use crate::catalog::{self, MouseProfile, Profile};
+use crate::{
+    catalog::{self, MouseProfile, Profile},
+    i18n::{Language, Text},
+};
 
 pub struct Controls {
     pub enabled: AtomicBool,
@@ -61,8 +64,8 @@ pub struct Worker {
 }
 
 impl Worker {
-    pub fn start(root: &Path, controls: Arc<Controls>) -> Result<Self, String> {
-        catalog::validate(root)?;
+    pub fn start(root: &Path, controls: Arc<Controls>, language: Language) -> Result<Self, String> {
+        catalog::validate(root, language)?;
         let root = root.to_owned();
         let (sender, receiver) = mpsc::sync_channel(32);
         let (ready_sender, ready_receiver) = mpsc::sync_channel(1);
@@ -70,14 +73,14 @@ impl Worker {
             .name("soundy-audio".into())
             .spawn(move || {
                 autoreleasepool(|_| {
-                    let mut audio = match Player::load(&root) {
+                    let mut audio = match Player::load(&root, language) {
                         Ok(audio) => audio,
                         Err(error) => {
                             let _ = ready_sender.send(Err(error));
                             return;
                         }
                     };
-                    if let Err(error) = audio.start() {
+                    if let Err(error) = audio.start(language) {
                         let _ = ready_sender.send(Err(error));
                         return;
                     }
@@ -123,7 +126,7 @@ impl Worker {
             .map_err(|e| e.to_string())?;
         match ready_receiver
             .recv()
-            .map_err(|_| "Аудиопоток завершился при запуске")?
+            .map_err(|_| language.text(Text::AudioThreadStopped))?
         {
             Ok(()) => Ok(Self {
                 sender,
@@ -171,7 +174,7 @@ struct Player {
 }
 
 impl Player {
-    fn load(root: &Path) -> Result<Self, String> {
+    fn load(root: &Path, language: Language) -> Result<Self, String> {
         // SAFETY: Engine, nodes, buffers and mixer stay on this one audio owner thread.
         // Formats are read from AVAudioFile, validated, and connected before engine start.
         unsafe {
@@ -193,7 +196,7 @@ impl Player {
             let mut samples = Vec::new();
             let mut pools: Vec<VoicePool> = Vec::new();
             for name in catalog::files() {
-                let buffer = read_buffer(&root.join(name))?;
+                let buffer = read_buffer(&root.join(name), language)?;
                 let format = buffer.format();
                 let duration =
                     Duration::from_secs_f64(f64::from(buffer.frameLength()) / format.sampleRate());
@@ -233,9 +236,9 @@ impl Player {
         }
     }
 
-    fn start(&self) -> Result<(), String> {
+    fn start(&self, language: Language) -> Result<(), String> {
         unsafe { self.engine.startAndReturnError() }
-            .map_err(|e| format!("Не удалось запустить аудиовыход: {e}"))
+            .map_err(|e| format!("{}: {e}", language.text(Text::AudioOutputFailed)))
     }
 
     fn play(&mut self, index: usize, volume: u8) {
@@ -287,8 +290,8 @@ impl Drop for Player {
     }
 }
 
-fn read_buffer(path: &Path) -> Result<Retained<AVAudioPCMBuffer>, String> {
-    let path_text = path.to_str().ok_or("Путь к звукам должен быть UTF-8")?;
+fn read_buffer(path: &Path, language: Language) -> Result<Retained<AVAudioPCMBuffer>, String> {
+    let path_text = path.to_str().ok_or(language.text(Text::PathUtf8Required))?;
     let url = NSURL::fileURLWithPath(&NSString::from_str(path_text));
     unsafe {
         let file = AVAudioFile::initForReading_error(AVAudioFile::alloc(), &url)
@@ -303,31 +306,36 @@ fn read_buffer(path: &Path) -> Result<Retained<AVAudioPCMBuffer>, String> {
             || !(1..=2).contains(&format.channelCount())
         {
             return Err(format!(
-                "Недопустимый формат или длительность: {}",
+                "{}: {}",
+                language.text(Text::InvalidAudioFormat),
                 path.display()
             ));
         }
-        let capacity = u32::try_from(frames).map_err(|_| "Слишком большой WAV")?;
+        let capacity = u32::try_from(frames).map_err(|_| language.text(Text::WavTooLarge))?;
         let buffer = AVAudioPCMBuffer::initWithPCMFormat_frameCapacity(
             AVAudioPCMBuffer::alloc(),
             &format,
             capacity,
         )
-        .ok_or("Не удалось выделить аудиобуфер")?;
+        .ok_or(language.text(Text::AudioBufferFailed))?;
         file.readIntoBuffer_error(&buffer)
             .map_err(|e| format!("{}: {e}", path.display()))?;
         if buffer.frameLength() != capacity {
-            return Err(format!("Неполный WAV: {}", path.display()));
+            return Err(format!(
+                "{}: {}",
+                language.text(Text::IncompleteWav),
+                path.display()
+            ));
         }
         Ok(buffer)
     }
 }
 
-pub fn check(root: &Path) -> Result<(), String> {
-    catalog::validate(root)?;
+pub fn check(root: &Path, language: Language) -> Result<(), String> {
+    catalog::validate(root, language)?;
     autoreleasepool(|_| {
         for name in catalog::files() {
-            let _ = read_buffer(&root.join(name))?;
+            let _ = read_buffer(&root.join(name), language)?;
         }
         Ok(())
     })

@@ -18,12 +18,18 @@ No accounts, subscriptions, or time limits. Everything runs locally.
 
 1. Download the `.pkg` from the [latest release](https://github.com/n-bautin/Soundy/releases/latest): `arm64` for Apple Silicon or `x86_64` for Intel.
 2. Open the installer, click **Continue → Install**, then **Close**. Launch Soundy from Applications. A ZIP archive is also available for manual installation.
-3. In Soundy's menu, click **«Разрешить мониторинг ввода…»** (Allow Input Monitoring) and enable access in macOS settings. Restart Soundy if prompted. The app's menus are currently in Russian.
-4. Choose **«Звук клавиатуры»** (Keyboard Sound) and **«Звук мыши»** (Mouse Sound), adjust the volume, and start typing.
+3. In Soundy's menu, click **Allow Input Monitoring…** and enable access in macOS settings. Restart Soundy if prompted.
+4. Choose **Keyboard Sound** and **Mouse Sound**, adjust the volume, and start typing.
 
 Requires **macOS 13 or later**.
 
 Keyboard sounds are unavailable in protected password fields and while Secure Keyboard Entry is enabled: macOS blocks these keystrokes from reaching other apps. Sounds resume when secure input ends. Learn more: [Apple — Secure Event Input](https://developer.apple.com/library/archive/technotes/tn2150/_index.html).
+
+## Language
+
+Soundy supports **English, Russian, and Simplified Chinese**. On first launch, it uses the first supported language in your macOS language preferences, or English if none match.
+
+Open **Language / Язык / 语言** in the menu bar and choose **English**, **Русский**, or **简体中文**. The change takes effect immediately and is saved for future launches. Sound pack names stay in English.
 
 ## Building
 

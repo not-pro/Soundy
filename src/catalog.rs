@@ -1,5 +1,7 @@
 use std::path::Path;
 
+use crate::i18n::{Language, Text};
+
 // Keep the first three IDs stable for settings saved by Soundy 1.0.0.
 const KEYBOARDS: [(&str, &str); 40] = [
     ("Tactile", "m_tactile"),
@@ -110,14 +112,6 @@ impl MouseProfile {
         Self(if index <= 15 { index as u8 } else { 0 })
     }
 
-    pub fn name(self) -> String {
-        match self.0 {
-            0 => "Выключен".into(),
-            15 => "Клик C".into(),
-            n => format!("Клик {n}"),
-        }
-    }
-
     pub fn sample_index(self, pressed: bool) -> Option<usize> {
         if self.0 == 0 {
             return None;
@@ -134,14 +128,18 @@ impl MouseProfile {
     }
 }
 
-pub fn validate(root: &Path) -> Result<(), String> {
+pub fn validate(root: &Path, language: Language) -> Result<(), String> {
     for name in files() {
         let file = root.join(name);
         let metadata = file
             .metadata()
             .map_err(|e| format!("{}: {e}", file.display()))?;
         if !metadata.is_file() || metadata.len() > 16 * 1024 * 1024 {
-            return Err(format!("Недопустимый звуковой файл: {}", file.display()));
+            return Err(format!(
+                "{}: {}",
+                language.text(Text::InvalidSoundFile),
+                file.display()
+            ));
         }
     }
     Ok(())
@@ -157,7 +155,11 @@ mod tests {
         let names: Vec<_> = files().collect();
         assert_eq!(names.len(), 240);
         assert_eq!(names.iter().copied().collect::<HashSet<_>>().len(), 240);
-        validate(&Path::new(env!("CARGO_MANIFEST_DIR")).join("assets/sounds")).unwrap();
+        validate(
+            &Path::new(env!("CARGO_MANIFEST_DIR")).join("assets/sounds"),
+            Language::English,
+        )
+        .unwrap();
         let mut used = HashSet::new();
         for profile in Profile::all() {
             for keycode in 0..128 {
