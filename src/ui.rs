@@ -5,17 +5,17 @@ use std::{
 };
 
 use objc2::{
-    DefinedClass, MainThreadOnly, define_class, msg_send, rc::Retained, runtime::ProtocolObject,
-    sel,
+    AnyThread, DefinedClass, MainThreadOnly, define_class, msg_send, rc::Retained,
+    runtime::ProtocolObject, sel,
 };
 use objc2_app_kit::{
-    NSAlert, NSApplication, NSApplicationActivationPolicy, NSApplicationDelegate, NSMenu,
-    NSMenuDelegate, NSMenuItem, NSStatusBar, NSStatusItem, NSWorkspace,
+    NSAccessibility, NSAlert, NSApplication, NSApplicationActivationPolicy, NSApplicationDelegate,
+    NSImage, NSMenu, NSMenuDelegate, NSMenuItem, NSStatusBar, NSStatusItem, NSWorkspace,
 };
 use objc2_core_graphics::{CGPreflightListenEventAccess, CGRequestListenEventAccess};
 use objc2_foundation::{
-    MainThreadMarker, NSNotification, NSObject, NSObjectProtocol, NSString, NSTimer, NSURL,
-    NSUserDefaults, ns_string,
+    MainThreadMarker, NSData, NSNotification, NSObject, NSObjectProtocol, NSSize, NSString,
+    NSTimer, NSURL, NSUserDefaults, ns_string,
 };
 
 use crate::{
@@ -52,7 +52,14 @@ define_class!(
             menu.setDelegate(Some(ProtocolObject::from_ref(self)));
             let status = NSStatusBar::systemStatusBar().statusItemWithLength(-1.0);
             if let Some(button) = status.button(mtm) {
-                button.setTitle(ns_string!("Soundy"));
+                let image = NSImage::initWithData(
+                    NSImage::alloc(),
+                    &NSData::with_bytes(include_bytes!("../assets/icons/tray-template.png")),
+                ).expect("embedded tray icon must decode");
+                image.setSize(NSSize::new(18.0, 18.0));
+                image.setTemplate(true);
+                button.setImage(Some(&image));
+                button.setAccessibilityLabel(Some(ns_string!("Soundy")));
                 button.setToolTip(Some(ns_string!("Soundy — звуки клавиатуры и мыши")));
             }
             status.setMenu(Some(&menu));
@@ -89,8 +96,9 @@ define_class!(
             let menu = self.ivars().menu.get().expect("menu created before timer");
             let keyboard_count = menu.itemAtIndex(3).and_then(|item| item.submenu()).map(|menu| menu.numberOfItems());
             let mouse_count = menu.itemAtIndex(4).and_then(|item| item.submenu()).map(|menu| menu.numberOfItems());
-            if self.ivars().status.get().is_some() && count >= 10 && keyboard_count == Some(40) && mouse_count == Some(16) {
-                println!("OK: AppKit launched, status item and {count} menu items created; no input monitoring started");
+            let tray_icon = self.ivars().status.get().and_then(|status| status.button(self.mtm())).and_then(|button| button.image());
+            if tray_icon.is_some_and(|image| image.isTemplate() && image.size() == NSSize::new(18.0, 18.0)) && count >= 10 && keyboard_count == Some(40) && mouse_count == Some(16) {
+                println!("OK: AppKit launched, template tray icon and {count} menu items created; no input monitoring started");
             } else {
                 eprintln!("Soundy: incomplete AppKit startup");
                 std::process::exit(1);
@@ -290,12 +298,19 @@ impl Delegate {
             .and_then(|status| status.button(self.mtm()))
         {
             button.setTitle(&NSString::from_str(if !granted || !listening {
-                "Soundy !"
+                " !"
             } else if enabled {
-                "Soundy"
+                ""
             } else {
-                "Soundy · пауза"
+                " Ⅱ"
             }));
+            button.setToolTip(Some(&NSString::from_str(if !granted || !listening {
+                "Soundy — мониторинг ввода недоступен"
+            } else if enabled {
+                "Soundy — звуки клавиатуры и мыши"
+            } else {
+                "Soundy — пауза"
+            })));
         }
     }
 

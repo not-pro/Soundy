@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<installer-gui-script minSpecVersion="2">
+  <title>Soundy @VERSION@</title>
+  <welcome file="welcome.rtf" mime-type="text/rtf"/>
+  <conclusion file="conclusion.rtf" mime-type="text/rtf"/>
+  <options customize="never" require-scripts="false" hostArchitectures="@ARCH@"/>
+  <domains enable_anywhere="false" enable_currentUserHome="false" enable_localSystem="true"/>
+  <volume-check script="true">
+    <allowed-os-versions><os-version min="13.0"/></allowed-os-versions>
+  </volume-check>
+  <choices-outline><line choice="soundy"/></choices-outline>
+  <choice id="soundy" title="Soundy" description="Звуки клавиатуры и мыши" visible="false">
+    <pkg-ref id="dev.soundy.app"/>
+  </choice>
+  <pkg-ref id="dev.soundy.app">Soundy-component.pkg</pkg-ref>
+  <pkg-ref id="dev.soundy.app">
+    <must-close><app id="dev.soundy.app"/></must-close>
+  </pkg-ref>
+</installer-gui-script>
