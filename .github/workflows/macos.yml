@@ -60,7 +60,7 @@ jobs:
         run: |
           test "$(uname -m)" = "$ARCH"
           sh scripts/bundle.sh
-          lipo -verify_arch "$ARCH" dist/Soundy.app/Contents/MacOS/soundy
+          lipo dist/Soundy.app/Contents/MacOS/soundy -verify_arch "$ARCH"
           dist/Soundy.app/Contents/MacOS/soundy --version
           cd dist
           archive="Soundy-v${VERSION}-macos-${ARCH}.zip"
