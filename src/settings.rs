@@ -74,20 +74,19 @@ define_class!(
         #[unsafe(method(drawRect:))]
         fn draw(&self, _dirty: NSRect) {
             let white = NSColor::colorWithWhite_alpha(1.0, 0.22);
-            for frame in [rect(22.0, 294.0, 436.0, 158.0), rect(22.0, 200.0, 436.0, 84.0), rect(22.0, 132.0, 436.0, 58.0), rect(22.0, 64.0, 436.0, 58.0)] {
-                rounded(frame, 14.0, &NSColor::colorWithWhite_alpha(1.0, 0.055), &white);
+            for frame in [rect(8.0, 139.0, 224.0, 72.0), rect(8.0, 85.0, 224.0, 48.0), rect(8.0, 53.0, 224.0, 28.0), rect(8.0, 21.0, 224.0, 28.0)] {
+                rounded(frame, 8.0, &NSColor::colorWithWhite_alpha(1.0, 0.055), &white);
             }
-            line(23.0, 373.0, 434.0);
-            line(22.0, 50.0, 436.0);
-            rounded(rect(262.0, 143.0, 178.0, 36.0), 9.0, &NSColor::colorWithWhite_alpha(1.0, 0.04), &white);
+            line(9.0, 175.0, 222.0);
+            line(8.0, 18.0, 224.0);
+            rounded(rect(86.0, 57.0, 138.0, 20.0), 5.0, &NSColor::colorWithWhite_alpha(1.0, 0.04), &white);
             let selected = match self.ivars().language { Language::Russian => 0.0, Language::English => 1.0, Language::Chinese => 2.0 };
-            rounded(rect(262.0 + selected * 59.0, 143.0, 60.0, 36.0), 9.0, &amber(0.45), &amber(1.0));
-            rounded(rect(388.0, 81.0, 48.0, 25.0), 12.5, &*if self.ivars().login { amber(0.95) } else { NSColor::colorWithWhite_alpha(1.0, 0.18) }, &white);
-            rounded(rect(if self.ivars().login { 413.0 } else { 390.0 }, 83.0, 21.0, 21.0), 10.5, &NSColor::whiteColor(), &NSColor::clearColor());
-            for y in [392.0, 313.0] {
-                rounded(rect(398.0, y, 37.0, 37.0), 18.5, &NSColor::colorWithWhite_alpha(1.0, 0.035), &NSColor::colorWithWhite_alpha(1.0, 0.5));
+            rounded(rect(86.0 + selected * 46.0, 57.0, 46.0, 20.0), 5.0, &amber(0.45), &amber(1.0));
+            rounded(rect(193.0, 27.0, 30.0, 17.0), 8.5, &*if self.ivars().login { amber(0.95) } else { NSColor::colorWithWhite_alpha(1.0, 0.18) }, &white);
+            rounded(rect(if self.ivars().login { 208.0 } else { 195.0 }, 29.0, 13.0, 13.0), 6.5, &NSColor::whiteColor(), &NSColor::clearColor());
+            for y in [183.0, 147.0] {
+                rounded(rect(207.0, y, 20.0, 20.0), 10.0, &NSColor::colorWithWhite_alpha(1.0, 0.035), &NSColor::colorWithWhite_alpha(1.0, 0.5));
             }
-            rounded(rect(426.0, 13.0, 28.0, 28.0), 14.0, &NSColor::colorWithWhite_alpha(1.0, 0.08), &NSColor::colorWithWhite_alpha(1.0, 0.4));
         }
     }
 );
@@ -116,7 +115,7 @@ pub fn create(mtm: MainThreadMarker) -> Retained<NSWindow> {
     // Keep a standard titled window so macOS owns the shape, clipping and shadow.
     let window = GlassWindow::alloc(mtm).set_ivars(());
     let window: Retained<GlassWindow> = unsafe {
-        msg_send![super(window), initWithContentRect: rect(0.0, 0.0, 480.0, 558.0), styleMask: NSWindowStyleMask::Titled | NSWindowStyleMask::Closable | NSWindowStyleMask::FullSizeContentView, backing: NSBackingStoreType::Buffered, defer: false]
+        msg_send![super(window), initWithContentRect: rect(0.0, 0.0, 240.0, 240.0), styleMask: NSWindowStyleMask::Titled | NSWindowStyleMask::Closable | NSWindowStyleMask::FullSizeContentView, backing: NSBackingStoreType::Buffered, defer: false]
     };
     unsafe {
         window.setReleasedWhenClosed(false);
@@ -222,7 +221,7 @@ pub fn populate(
     let login = menu
         .itemWithTitle(&NSString::from_str(language.text(Text::LaunchAtLogin)))
         .unwrap();
-    let bounds = rect(0.0, 0.0, 480.0, 558.0);
+    let bounds = rect(0.0, 0.0, 240.0, 240.0);
     let view = Glass::alloc(mtm).set_ivars(GlassState {
         language,
         login: login.state() == 1,
@@ -249,37 +248,20 @@ pub fn populate(
     glass.setAppearance(
         NSAppearance::appearanceNamed(unsafe { NSAppearanceNameDarkAqua }).as_deref(),
     );
-    let image = NSImage::initWithData(
-        NSImage::alloc(),
-        &NSData::with_bytes(include_bytes!("../assets/icons/soundy.png")),
-    )
-    .expect("app icon");
-    let app_icon = NSImageView::imageViewWithImage(&image, mtm);
-    app_icon.setFrame(rect(24.0, 466.0, 76.0, 76.0));
-    view.addSubview(&app_icon);
-    let title = label(&view, "Soundy", rect(110.0, 480.0, 270.0, 46.0), 32.0);
-    title.setFont(Some(&NSFont::boldSystemFontOfSize(32.0)));
     symbol_button(
         &view,
         "xmark",
         language.text(Text::CloseWindow),
-        rect(429.0, 510.0, 25.0, 25.0),
+        rect(216.0, 218.0, 16.0, 16.0),
         target,
         sel!(closeSettings:),
     );
 
-    for (group, text, heading, glyph, y) in [
-        (0, Text::KeyboardSound, Text::Keyboard, "keyboard", 373.0),
-        (1, Text::MouseSound, Text::Mouse, "computermouse", 294.0),
+    for (group, text, glyph, y) in [
+        (0, Text::KeyboardSound, "keyboard", 175.0),
+        (1, Text::MouseSound, "computermouse", 139.0),
     ] {
-        icon(&view, glyph, rect(48.0, y + 27.0, 32.0, 30.0));
-        let caption = label(
-            &view,
-            language.text(heading),
-            rect(112.0, y + 44.0, 260.0, 22.0),
-            14.0,
-        );
-        caption.setTextColor(Some(&NSColor::colorWithWhite_alpha(1.0, 0.6)));
+        icon(&view, glyph, rect(16.0, y + 10.0, 18.0, 16.0));
         let choices = menu
             .itemWithTitle(&NSString::from_str(language.text(text)))
             .unwrap()
@@ -295,7 +277,7 @@ pub fn populate(
         }
         let popup = NSPopUpButton::initWithFrame_pullsDown(
             NSPopUpButton::alloc(mtm),
-            rect(108.0, y + 15.0, 270.0, 30.0),
+            rect(39.0, y + 6.0, 149.0, 24.0),
             false,
         );
         popup.setMenu(Some(&choices));
@@ -307,8 +289,8 @@ pub fn populate(
         {
             cell.setArrowPosition(NSPopUpArrowPosition::NoArrow);
         }
-        icon(&view, "chevron.down", rect(363.0, y + 22.0, 12.0, 12.0));
-        popup.setFont(Some(&NSFont::systemFontOfSize(18.0)));
+        icon(&view, "chevron.down", rect(188.0, y + 13.0, 8.0, 8.0));
+        popup.setFont(Some(&NSFont::systemFontOfSize(12.0)));
         popup.setContentTintColor(Some(&NSColor::whiteColor()));
         popup.setTag(group);
         popup.setAccessibilityLabel(Some(&NSString::from_str(language.text(text))));
@@ -321,28 +303,28 @@ pub fn populate(
             &view,
             "play.fill",
             language.text(Text::Preview),
-            rect(399.0, y + 20.0, 35.0, 35.0),
+            rect(207.0, y + 8.0, 20.0, 20.0),
             target,
             sel!(settingsPreview:),
         );
         preview.setTag(group);
     }
-    icon(&view, "speaker.wave.2", rect(46.0, 246.0, 25.0, 25.0));
+    icon(&view, "speaker.wave.2", rect(16.0, 111.0, 15.0, 15.0));
     label(
         &view,
         language.text(Text::Volume),
-        rect(88.0, 245.0, 240.0, 25.0),
-        15.0,
+        rect(38.0, 109.0, 130.0, 17.0),
+        11.0,
     );
     let percentage = label(
         &view,
         &format!("{volume}%"),
-        rect(367.0, 245.0, 70.0, 25.0),
-        15.0,
+        rect(180.0, 109.0, 44.0, 17.0),
+        11.0,
     );
     percentage.setAlignment(NSTextAlignment::Right);
     percentage.setTag(VOLUME_TAG);
-    let slider = NSSlider::initWithFrame(NSSlider::alloc(mtm), rect(45.0, 213.0, 392.0, 26.0));
+    let slider = NSSlider::initWithFrame(NSSlider::alloc(mtm), rect(14.0, 87.0, 212.0, 22.0));
     let cell = GlassSlider::alloc(mtm).set_ivars(());
     let cell: Retained<GlassSlider> = unsafe { msg_send![super(cell), init] };
     slider.setCell(Some(&cell));
@@ -356,12 +338,12 @@ pub fn populate(
         slider.setAction(Some(sel!(settingsVolume:)));
     }
     view.addSubview(&slider);
-    icon(&view, "globe", rect(47.0, 149.0, 25.0, 25.0));
+    icon(&view, "globe", rect(16.0, 59.0, 16.0, 16.0));
     label(
         &view,
         language.text(Text::LanguageMenu),
-        rect(88.0, 148.0, 170.0, 25.0),
-        15.0,
+        rect(38.0, 58.0, 46.0, 17.0),
+        11.0,
     );
     for (index, (title, option)) in [
         ("RU", Language::Russian),
@@ -374,26 +356,27 @@ pub fn populate(
         let control = button(
             &view,
             title,
-            rect(262.0 + index as f64 * 59.0, 143.0, 60.0, 36.0),
+            rect(86.0 + index as f64 * 46.0, 57.0, 46.0, 20.0),
             target,
             sel!(settingsLanguage:),
         );
+        control.setFont(Some(&NSFont::systemFontOfSize(11.0)));
         control.setTag(option as isize);
         control.setAccessibilityLabel(Some(&NSString::from_str(option.name())));
         control.setButtonType(NSButtonType::PushOnPushOff);
         control.setState(if language == option { 1 } else { 0 });
     }
-    icon(&view, "power", rect(47.0, 81.0, 25.0, 25.0));
+    icon(&view, "power", rect(16.0, 27.0, 16.0, 16.0));
     label(
         &view,
         language.text(Text::LaunchAtLogin),
-        rect(88.0, 80.0, 292.0, 25.0),
-        15.0,
+        rect(38.0, 26.0, 152.0, 17.0),
+        11.0,
     );
     let toggle = button(
         &view,
         "",
-        rect(383.0, 76.0, 58.0, 35.0),
+        rect(187.0, 23.0, 42.0, 24.0),
         target,
         sel!(settingsAction:),
     );
@@ -402,10 +385,10 @@ pub fn populate(
     toggle.setAccessibilityLabel(Some(&login.title()));
     toggle.setButtonType(NSButtonType::PushOnPushOff);
     toggle.setState(login.state());
-    let dot = label(&view, "●", rect(29.0, 16.0, 18.0, 22.0), 12.0);
+    let dot = label(&view, "●", rect(10.0, 1.0, 12.0, 16.0), 9.0);
     dot.setTag(STATUS_DOT_TAG);
     dot.setHidden(!listening);
-    let status = label(&view, "", rect(51.0, 14.0, 360.0, 26.0), 14.0);
+    let status = label(&view, "", rect(25.0, 0.0, 182.0, 17.0), 10.0);
     status.setTag(STATUS_TAG);
     if !listening {
         if let Some(item) = menu
@@ -415,11 +398,13 @@ pub fn populate(
         {
             let action = button(
                 &view,
-                &item.title().to_string(),
-                rect(29.0, 13.0, 382.0, 29.0),
+                language.text(Text::InputNeeded),
+                rect(10.0, 0.0, 193.0, 18.0),
                 target,
                 sel!(settingsAction:),
             );
+            action.setFont(Some(&NSFont::systemFontOfSize(10.0)));
+            action.setToolTip(Some(&item.title()));
             action.setTag(menu.indexOfItem(&item));
             status.setHidden(true);
         }
@@ -428,7 +413,7 @@ pub fn populate(
         &view,
         "ellipsis",
         language.text(Text::About),
-        rect(426.0, 13.0, 28.0, 28.0),
+        rect(211.0, 0.0, 22.0, 18.0),
         target,
         sel!(showAbout:),
     );
@@ -478,15 +463,8 @@ pub fn about(
 ) -> Retained<NSPopover> {
     let mtm = sender.mtm();
     let extra: Vec<_> = menu.itemArray().iter().enumerate().filter(|(_, item)| matches!(item.action(), Some(action) if action == sel!(approveLogin:) || action == sel!(installUpdate:))).collect();
-    let height = 188.0 + extra.len() as f64 * 34.0;
-    let view = NSView::initWithFrame(NSView::alloc(mtm), rect(0.0, 0.0, 280.0, height));
-    let title = label(
-        &view,
-        "Soundy",
-        rect(20.0, height - 40.0, 240.0, 25.0),
-        19.0,
-    );
-    title.setFont(Some(&NSFont::boldSystemFontOfSize(19.0)));
+    let height = 112.0 + extra.len() as f64 * 24.0;
+    let view = NSView::initWithFrame(NSView::alloc(mtm), rect(0.0, 0.0, 180.0, height));
     label(
         &view,
         &format!(
@@ -494,8 +472,8 @@ pub fn about(
             language.text(Text::Version),
             env!("CARGO_PKG_VERSION")
         ),
-        rect(20.0, height - 63.0, 240.0, 22.0),
-        12.0,
+        rect(12.0, height - 26.0, 156.0, 16.0),
+        10.0,
     );
     for (index, (title, data)) in [
         (
@@ -513,14 +491,15 @@ pub fn about(
         let link = button(
             &view,
             title,
-            rect(20.0, height - 104.0 - index as f64 * 36.0, 240.0, 30.0),
+            rect(12.0, height - 54.0 - index as f64 * 24.0, 156.0, 22.0),
             target,
             sel!(openSocial:),
         );
+        link.setFont(Some(&NSFont::systemFontOfSize(11.0)));
         link.setTag(index as isize);
         let image = NSImage::initWithData(NSImage::alloc(), &NSData::with_bytes(data))
             .expect("bundled social icon");
-        image.setSize(NSSize::new(19.0, 19.0));
+        image.setSize(NSSize::new(14.0, 14.0));
         image.setTemplate(true);
         link.setImage(Some(&image));
         link.setImagePosition(NSCellImagePosition::ImageLeft);
@@ -530,19 +509,22 @@ pub fn about(
         let action = button(
             &view,
             &item.title().to_string(),
-            rect(20.0, height - 174.0 - position as f64 * 34.0, 240.0, 30.0),
+            rect(12.0, height - 102.0 - position as f64 * 24.0, 156.0, 22.0),
             target,
             sel!(settingsAction:),
         );
+        action.setFont(Some(&NSFont::systemFontOfSize(11.0)));
+        action.setToolTip(Some(&item.title()));
         action.setTag(index as isize);
     }
     let quit = button(
         &view,
         language.text(Text::Quit),
-        rect(20.0, 10.0, 240.0, 28.0),
+        rect(12.0, 8.0, 156.0, 20.0),
         target,
         sel!(settingsAction:),
     );
+    quit.setFont(Some(&NSFont::systemFontOfSize(11.0)));
     quit.setTag(menu.numberOfItems() - 1);
     let controller = NSViewController::new(mtm);
     controller.setView(&view);
@@ -553,7 +535,7 @@ pub fn about(
     popover.setBehavior(NSPopoverBehavior::Transient);
     popover.setAnimates(false);
     popover.setContentViewController(Some(&controller));
-    popover.setContentSize(NSSize::new(280.0, height));
+    popover.setContentSize(NSSize::new(180.0, height));
     popover.showRelativeToRect_ofView_preferredEdge(sender.bounds(), sender, NSRectEdge::MaxY);
     popover
 }

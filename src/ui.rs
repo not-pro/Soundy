@@ -335,6 +335,12 @@ define_class!(
                     self.open_settings(sel!(openSettings:), self);
                     assert!(std::ptr::eq(&**self.ivars().window.borrow().as_ref().unwrap(), &*window), "reuse the visible window");
                     let view = settings::content(&window);
+                    assert_eq!(view.bounds().size, NSSize::new(240.0, 240.0));
+                    for child in view.subviews() {
+                        let frame = child.frame();
+                        assert!(frame.origin.x >= 0.0 && frame.origin.y >= 0.0 && frame.origin.x + frame.size.width <= 240.0 && frame.origin.y + frame.size.height <= 240.0, "compact controls must fit: {frame:?}");
+                    }
+                    assert!(!view.subviews().iter().filter_map(|view| view.downcast::<objc2_app_kit::NSTextField>().ok()).any(|label| label.stringValue().to_string() == "Soundy"));
                     let popups: Vec<_> = view.subviews().iter().filter_map(|view| view.downcast::<NSPopUpButton>().ok()).collect();
                     assert_eq!(popups.len(), 2);
                     for (popup, value) in popups.iter().zip([6, 15]) {
@@ -368,6 +374,7 @@ define_class!(
                     let popover = self.ivars().about.borrow().as_ref().unwrap().clone();
                     assert!(popover.isShown());
                     let content = popover.contentViewController().unwrap().view();
+                    assert_eq!(content.bounds().size, NSSize::new(180.0, 112.0 + if login::status() == login::REQUIRES_APPROVAL { 24.0 } else { 0.0 }));
                     let links: Vec<_> = content.subviews().iter().filter_map(|view| view.downcast::<NSButton>().ok().filter(|button| button.action() == Some(sel!(openSocial:)))).collect();
                     assert_eq!(links.len(), 2);
                     assert!(links.iter().all(|button| button.image().is_some()));

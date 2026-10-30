@@ -87,8 +87,7 @@ macro_rules! messages {
 
 messages! {
     OpenSettings => ["Open Soundy…", "Открыть Soundy…", "打开 Soundy…"],
-    Keyboard => ["Keyboard", "Клавиатура", "键盘"],
-    Mouse => ["Mouse", "Мышь", "鼠标"],
+    InputNeeded => ["Enable input access…", "Нет доступа к вводу…", "启用输入权限…"],
     Preview => ["Preview sound", "Прослушать звук", "试听音效"],
     CloseWindow => ["Close window", "Закрыть окно", "关闭窗口"],
     About => ["About Soundy", "О Soundy", "关于 Soundy"],
