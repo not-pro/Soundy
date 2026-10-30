@@ -9,6 +9,8 @@ mod input;
 #[cfg(target_os = "macos")]
 mod login;
 #[cfg(target_os = "macos")]
+mod settings;
+#[cfg(target_os = "macos")]
 mod ui;
 #[cfg(target_os = "macos")]
 mod update;

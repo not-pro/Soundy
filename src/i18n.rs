@@ -86,6 +86,8 @@ macro_rules! messages {
 }
 
 messages! {
+    OpenSettings => ["Open Soundy…", "Открыть Soundy…", "打开 Soundy…"],
+    WindowHint => ["Close this window to keep Soundy in the menu bar.", "Закройте окно — Soundy останется в строке меню.", "关闭窗口后，Soundy 将继续在菜单栏运行。"],
     AllowInput => ["Allow Input Monitoring…", "Разрешить мониторинг ввода…", "允许输入监控…"],
     RetryInput => ["Reconnect Input…", "Повторить подключение ввода…", "重新连接输入设备…"],
     KeyboardSound => ["Keyboard Sound", "Звук клавиатуры", "键盘音效"],

@@ -12,7 +12,8 @@ use objc2::{
 };
 use objc2_app_kit::{
     NSAccessibility, NSAlert, NSApplication, NSApplicationActivationPolicy, NSApplicationDelegate,
-    NSImage, NSMenu, NSMenuDelegate, NSMenuItem, NSStatusBar, NSStatusItem, NSWorkspace,
+    NSButton, NSImage, NSMenu, NSMenuDelegate, NSMenuItem, NSPopUpButton, NSStatusBar,
+    NSStatusItem, NSWindow, NSWindowDelegate, NSWorkspace,
 };
 use objc2_core_graphics::{CGPreflightListenEventAccess, CGRequestListenEventAccess};
 use objc2_foundation::{
@@ -25,11 +26,12 @@ use crate::{
     catalog::{MouseProfile, Profile},
     i18n::{Language, Text},
     input::InputTap,
-    login,
+    login, settings,
     update::Updater,
 };
 
 struct State {
+    window: RefCell<Option<Retained<NSWindow>>>,
     controls: Arc<Controls>,
     language: Cell<Language>,
     worker: RefCell<Option<Worker>>,
@@ -103,12 +105,61 @@ define_class!(
         }
     }
 
+    unsafe impl NSWindowDelegate for Delegate {
+        #[unsafe(method(windowWillClose:))]
+        fn window_will_close(&self, _notification: &NSNotification) {
+            if let Some(window) = self.ivars().window.borrow_mut().take() {
+                // Release after AppKit finishes the close event, not inside its callback.
+                let _ = Retained::autorelease_ptr(window);
+            }
+        }
+    }
+
     unsafe impl NSMenuDelegate for Delegate {
         #[unsafe(method(menuWillOpen:))]
         fn menu_will_open(&self, _menu: &NSMenu) { self.refresh(); }
     }
 
     impl Delegate {
+        #[unsafe(method(openSettings:))]
+        fn open_settings(&self, _sender: &AnyObject) {
+            self.refresh();
+            if self.ivars().window.borrow().is_none() {
+                let window = settings::create(self.mtm());
+                window.setDelegate(Some(ProtocolObject::from_ref(self)));
+                *self.ivars().window.borrow_mut() = Some(window);
+                self.refresh();
+            }
+            if let Some(window) = self.ivars().window.borrow().as_ref() {
+                #[allow(deprecated)] // macOS 13 compatibility; activate() requires macOS 14.
+                NSApplication::sharedApplication(self.mtm()).activateIgnoringOtherApps(true);
+                window.makeKeyAndOrderFront(None);
+            }
+        }
+
+        #[unsafe(method(settingsChoice:))]
+        fn settings_choice(&self, sender: &NSPopUpButton) {
+            if let Some(item) = sender.selectedItem() {
+                match sender.tag() {
+                    0 => self.select_profile(sel!(selectProfile:), &item),
+                    1 => self.select_mouse(sel!(selectMouse:), &item),
+                    2 => self.select_volume(sel!(selectVolume:), &item),
+                    3 => self.select_language(sel!(selectLanguage:), &item),
+                    _ => {},
+                }
+            }
+        }
+
+        #[unsafe(method(settingsAction:))]
+        fn settings_action(&self, sender: &NSButton) {
+            if let Some(item) = self.ivars().menu.get().and_then(|menu| menu.itemAtIndex(sender.tag())) {
+                if let Some(action) = item.action() {
+                    // SAFETY: Use the same target, selector and sender as the tray item.
+                    unsafe { NSApplication::sharedApplication(self.mtm()).sendAction_to_from(action, item.target().as_deref(), Some(&item)); }
+                }
+            }
+        }
+
         #[unsafe(method(updater:didFindValidUpdate:))]
         fn update_found(&self, _updater: &AnyObject, item: &AnyObject) {
             // SAFETY: Sparkle passes SUAppcastItem, whose displayVersionString
@@ -158,6 +209,7 @@ define_class!(
                 self.refresh();
                 println!("OK: background update probe: {expected}; no windows shown");
             }
+            assert!(self.ivars().window.borrow().is_none(), "startup must remain tray-only");
             for language in Language::ALL {
                 let title = self.ivars().language.get().text(Text::LanguageMenu);
                 let language_menu = menu.itemWithTitle(&NSString::from_str(title)).unwrap().submenu().unwrap();
@@ -206,7 +258,7 @@ define_class!(
                 let login_item = menu.itemWithTitle(&NSString::from_str(language.text(Text::LaunchAtLogin))).unwrap();
                 assert_eq!(login_item.state() == 1, matches!(login::status(), login::ENABLED | login::REQUIRES_APPROVAL));
                 // Smoke mode never starts the input tap, so Allow/Reconnect is present.
-                assert_eq!(menu.numberOfItems(), 10 + if login::status() == login::REQUIRES_APPROVAL { 1 } else { 0 });
+                assert_eq!(menu.numberOfItems(), 11 + if login::status() == login::REQUIRES_APPROVAL { 1 } else { 0 });
                 *self.ivars().update_version.borrow_mut() = Some("99.0.0".into());
                 self.refresh();
                 let title = format!("{}: 99.0.0…", language.text(Text::UpdateAvailable));
@@ -220,9 +272,39 @@ define_class!(
                 let image = button.image().unwrap();
                 assert!(image.isTemplate() && image.size() == NSSize::new(18.0, 18.0));
                 assert_eq!(button.toolTip().unwrap().to_string(), language.text(Text::InputUnavailable));
+                let weak = objc2::rc::autoreleasepool(|_| {
+                    self.open_settings(sel!(openSettings:), self);
+                    let window = self.ivars().window.borrow().as_ref().unwrap().clone();
+                    let weak = objc2::rc::Weak::from_retained(&window);
+                    self.open_settings(sel!(openSettings:), self);
+                    assert!(std::ptr::eq(&**self.ivars().window.borrow().as_ref().unwrap(), &*window), "reuse the visible window");
+                    let view = window.contentView().unwrap().subviews().objectAtIndex(0);
+                    let popups: Vec<_> = view.subviews().iter().filter_map(|view| view.downcast::<NSPopUpButton>().ok()).collect();
+                    assert_eq!(popups.len(), 4);
+                    for (popup, value) in popups.iter().zip([6, 15, 25, language as isize]) {
+                        assert!(popup.selectItemWithTag(value));
+                        // Exercise the actual NSControl target/action route.
+                        unsafe { popup.sendAction_to(popup.action(), popup.target().as_deref()); }
+                    }
+                    assert_eq!(self.ivars().defaults.integerForKey(ns_string!("profile")), 6);
+                    assert_eq!(self.ivars().defaults.integerForKey(ns_string!("mouseProfile")), 15);
+                    assert_eq!(self.ivars().defaults.integerForKey(ns_string!("volume")), 25);
+                    assert_eq!(Language::load(&self.ivars().defaults), language);
+                    window.performClose(None);
+                    assert!(self.ivars().window.borrow().is_none(), "close must clear the UI owner");
+                    assert!(self.ivars().worker.borrow().is_some(), "audio must survive closing UI");
+                    weak
+                });
+                assert!(weak.load().is_none(), "closed window must deallocate after the event pool drains");
+                println!("OK: {} settings controls, persistence, reopen and UI deallocation", language.code());
                 println!("OK: {} menu, language selection and saved preference; no input monitoring started", language.code());
             }
             self.ivars().defaults.removePersistentDomainForName(&smoke_defaults_name());
+            if std::env::var_os("SOUNDY_SETTINGS_PREVIEW").is_some() {
+                self.ivars().language.set(Language::Russian);
+                self.open_settings(sel!(openSettings:), self);
+                return;
+            }
             NSApplication::sharedApplication(self.mtm()).terminate(None);
         }
 
@@ -343,6 +425,7 @@ impl Delegate {
         }
         let this = Self::alloc(mtm).set_ivars(State {
             controls,
+            window: RefCell::new(None),
             language: Cell::new(language),
             defaults,
             smoke_test,
@@ -380,6 +463,13 @@ impl Delegate {
         };
         menu.removeAllItems();
         let controls = &self.ivars().controls;
+        self.item(
+            menu,
+            language.text(Text::OpenSettings),
+            Some(sel!(openSettings:)),
+            0,
+            false,
+        );
         if !granted {
             self.item(
                 menu,
@@ -484,6 +574,9 @@ impl Delegate {
             );
         }
         self.item(menu, language.text(Text::Quit), Some(sel!(quit:)), 0, false);
+        if let Some(window) = self.ivars().window.borrow().as_ref() {
+            settings::populate(window, menu, self, language);
+        }
         if let Some(button) = self
             .ivars()
             .status

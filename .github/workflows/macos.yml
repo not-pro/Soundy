@@ -54,6 +54,8 @@ jobs:
         run: cargo clippy --locked --offline --all-targets -- -D warnings
       - name: Test
         run: cargo test --locked --offline
+      - name: Native settings lifecycle
+        run: cargo run --locked --offline -- --smoke-test
       - name: Build and package
         run: |
           test "$(uname -m)" = "$ARCH"

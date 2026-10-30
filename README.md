@@ -12,6 +12,8 @@ Pick a sound to match your mood: **40 keyboard profiles and 15 mouse sound optio
 
 Soundy lives in the menu bar. Choose keyboard and mouse sounds separately and adjust the volume. Keyboard profiles are grouped into **Mechanical, Electronic, Fun, and Typewriters** sections. Selecting a profile plays a sample. Your settings are saved between launches. You can turn off mouse sounds while keeping keyboard sounds enabled, or mute everything with **Volume → 0%**.
 
+Use **Open Soundy…** in the menu bar for the orange glass settings window. It offers the same settings and actions as the menu. Closing the window keeps sounds running and releases the window and its controls. Soundy always starts in the menu bar, including at login; the settings window is created only when opened.
+
 Enable **Launch at Login** to start Soundy automatically when you sign in. If macOS requests approval, use **Allow in Login Items…** to open System Settings.
 
 Soundy checks for updates in the background each time it starts. When a newer version is available, an **Update Available: …** item appears in the menu. Click it to download, install, and restart Soundy without running the PKG installer. Update checks do not interrupt you with a dialog.
