@@ -3,7 +3,7 @@ use std::{
     sync::{
         Arc,
         atomic::{AtomicU8, Ordering},
-        mpsc::{self, SyncSender},
+        mpsc::{self, RecvTimeoutError, SyncSender},
     },
     thread::{self, JoinHandle},
     time::{Duration, Instant},
@@ -53,6 +53,7 @@ pub enum Command {
     },
     Preview,
     PreviewMouse,
+    ProfilesChanged,
     Stop,
 }
 
@@ -71,13 +72,7 @@ impl Worker {
             .name("soundy-audio".into())
             .spawn(move || {
                 autoreleasepool(|_| {
-                    let mut audio = match Player::load(&root, language) {
-                        Ok(audio) => audio,
-                        Err(error) => {
-                            let _ = ready_sender.send(Err(error));
-                            return;
-                        }
-                    };
+                    let mut audio = Player::new();
                     if let Err(error) = audio.start(language) {
                         let _ = ready_sender.send(Err(error));
                         return;
@@ -85,7 +80,13 @@ impl Worker {
                     if ready_sender.send(Ok(())).is_err() {
                         return;
                     }
-                    while let Ok(command) = receiver.recv() {
+                    let mut next_cleanup = Instant::now();
+                    loop {
+                        let command = match receiver.recv_timeout(CACHE_SWEEP_INTERVAL) {
+                            Ok(Command::Stop) | Err(RecvTimeoutError::Disconnected) => break,
+                            Ok(command) => Some(command),
+                            Err(RecvTimeoutError::Timeout) => None,
+                        };
                         autoreleasepool(|_| {
                             let profile = Profile::from_index(
                                 controls.profile.load(Ordering::Relaxed).into(),
@@ -93,30 +94,37 @@ impl Worker {
                             let mouse = MouseProfile::from_index(
                                 controls.mouse_profile.load(Ordering::Relaxed).into(),
                             );
+                            let now = Instant::now();
+                            if let Err(error) =
+                                audio.select_profiles(&root, profile, mouse, language, now)
+                            {
+                                eprintln!("Soundy: {error}");
+                            }
+                            if now >= next_cleanup {
+                                audio.evict_expired(now);
+                                next_cleanup = now + CACHE_SWEEP_INTERVAL;
+                            }
                             let index = match command {
-                                Command::Key {
+                                Some(Command::Key {
                                     keycode,
                                     pressed,
                                     at,
-                                } if at.elapsed() < Duration::from_millis(100) => {
+                                }) if at.elapsed() < Duration::from_millis(100) => {
                                     profile.sample_index(keycode, pressed)
                                 }
-                                Command::Mouse { pressed, at }
+                                Some(Command::Mouse { pressed, at })
                                     if at.elapsed() < Duration::from_millis(100) =>
                                 {
                                     mouse.sample_index(pressed)
                                 }
-                                Command::Preview => profile.sample_index(0, true),
-                                Command::PreviewMouse => mouse.sample_index(true),
+                                Some(Command::Preview) => profile.sample_index(0, true),
+                                Some(Command::PreviewMouse) => mouse.sample_index(true),
                                 _ => None,
                             };
                             if let Some(index) = index {
                                 audio.play(index, controls.volume.load(Ordering::Relaxed));
                             }
                         });
-                        if matches!(command, Command::Stop) {
-                            break;
-                        }
                     }
                 });
             })
@@ -146,6 +154,9 @@ impl Drop for Worker {
     }
 }
 
+const CACHE_TTL: Duration = Duration::from_secs(60);
+const CACHE_SWEEP_INTERVAL: Duration = Duration::from_secs(1);
+
 struct Voice {
     node: Retained<AVAudioPlayerNode>,
     busy_until: Instant,
@@ -156,6 +167,7 @@ struct Sample {
     duration: Duration,
     pool: usize,
     last_play: Option<Instant>,
+    expires_at: Option<Instant>,
 }
 
 struct VoicePool {
@@ -165,15 +177,15 @@ struct VoicePool {
 
 struct Player {
     engine: Retained<AVAudioEngine>,
-    samples: Vec<Sample>,
-    pools: Vec<VoicePool>,
+    samples: Vec<Option<Sample>>,
+    pools: Vec<Option<VoicePool>>,
+    profiles: Option<(Profile, MouseProfile)>,
     _limiter: Retained<AVAudioUnitEffect>,
 }
 
 impl Player {
-    fn load(root: &Path, language: Language) -> Result<Self, String> {
+    fn new() -> Self {
         // SAFETY: Engine, nodes, buffers and mixer stay on this one audio owner thread.
-        // Formats are read from AVAudioFile, validated, and connected before engine start.
         unsafe {
             let engine = AVAudioEngine::new();
             let mixer = engine.mainMixerNode();
@@ -190,46 +202,146 @@ impl Player {
             engine.attachNode(&limiter);
             engine.connect_to_format(&mixer, &limiter, None);
             engine.connect_to_format(&limiter, &engine.outputNode(), None);
-            let mut samples = Vec::new();
-            let mut pools: Vec<VoicePool> = Vec::new();
-            for name in catalog::files() {
-                let buffer = read_buffer(&root.join(name), language)?;
-                let format = buffer.format();
-                let duration =
-                    Duration::from_secs_f64(f64::from(buffer.frameLength()) / format.sampleRate());
-                // ponytail: six shared voices per PCM format; increase if dense bursts clip tails.
-                let pool = match pools.iter().position(|pool| pool.format.isEqual(&format)) {
-                    Some(index) => index,
-                    None => {
-                        let voices = (0..6)
-                            .map(|_| {
-                                let node = AVAudioPlayerNode::new();
-                                engine.attachNode(&node);
-                                engine.connect_to_format(&node, &mixer, Some(&format));
-                                Voice {
-                                    node,
-                                    busy_until: Instant::now(),
-                                }
-                            })
-                            .collect();
-                        pools.push(VoicePool { format, voices });
-                        pools.len() - 1
-                    }
-                };
-                samples.push(Sample {
-                    buffer,
-                    duration,
-                    pool,
-                    last_play: None,
-                });
-            }
             engine.prepare();
-            Ok(Self {
+            Self {
                 engine,
-                samples,
-                pools,
+                samples: std::iter::repeat_with(|| None)
+                    .take(catalog::files().count())
+                    .collect(),
+                pools: Vec::new(),
+                profiles: None,
                 _limiter: limiter,
-            })
+            }
+        }
+    }
+
+    fn select_profiles(
+        &mut self,
+        root: &Path,
+        profile: Profile,
+        mouse: MouseProfile,
+        language: Language,
+        now: Instant,
+    ) -> Result<(), String> {
+        if self.profiles == Some((profile, mouse)) {
+            return Ok(());
+        }
+        self.profiles = Some((profile, mouse));
+        let needed: Vec<_> = profile
+            .sample_indices()
+            .chain(mouse.sample_indices())
+            .collect();
+        for (index, sample) in self.samples.iter_mut().enumerate() {
+            if let Some(sample) = sample {
+                if needed.contains(&index) {
+                    sample.expires_at = None;
+                } else if sample.expires_at.is_none() {
+                    sample.expires_at = Some(now + CACHE_TTL);
+                }
+            }
+        }
+        let mut first_error = None;
+        for index in needed {
+            if self.samples[index].is_none() {
+                match self.load_sample(root, index, language, now) {
+                    Ok(sample) => self.samples[index] = Some(sample),
+                    Err(error) => {
+                        first_error.get_or_insert(error);
+                    }
+                }
+            }
+        }
+        first_error.map_or(Ok(()), Err)
+    }
+
+    fn load_sample(
+        &mut self,
+        root: &Path,
+        index: usize,
+        language: Language,
+        now: Instant,
+    ) -> Result<Sample, String> {
+        let name = catalog::files().nth(index).expect("catalog sample index");
+        let buffer = read_buffer(&root.join(name), language)?;
+        // SAFETY: read_buffer validated this immutable PCM buffer's length and format.
+        let (format, duration) = unsafe {
+            let format = buffer.format();
+            let duration =
+                Duration::from_secs_f64(f64::from(buffer.frameLength()) / format.sampleRate());
+            (format, duration)
+        };
+        let pool = match self.pools.iter().position(|pool| {
+            pool.as_ref()
+                // SAFETY: Both formats belong to validated PCM buffers on this thread.
+                .is_some_and(|pool| unsafe { pool.format.isEqual(&format) })
+        }) {
+            Some(index) => index,
+            None => {
+                // SAFETY: Graph changes and playback are serialized on the audio thread.
+                let voices = unsafe {
+                    let mixer = self.engine.mainMixerNode();
+                    // ponytail: six shared voices per PCM format; increase if dense bursts clip tails.
+                    (0..6)
+                        .map(|_| {
+                            let node = AVAudioPlayerNode::new();
+                            self.engine.attachNode(&node);
+                            self.engine.connect_to_format(&node, &mixer, Some(&format));
+                            Voice {
+                                node,
+                                busy_until: now,
+                            }
+                        })
+                        .collect()
+                };
+                let pool = Some(VoicePool { format, voices });
+                if let Some(index) = self.pools.iter().position(Option::is_none) {
+                    self.pools[index] = pool;
+                    index
+                } else {
+                    self.pools.push(pool);
+                    self.pools.len() - 1
+                }
+            }
+        };
+        Ok(Sample {
+            buffer,
+            duration,
+            pool,
+            last_play: None,
+            expires_at: None,
+        })
+    }
+
+    fn evict_expired(&mut self, now: Instant) {
+        for slot in &mut self.samples {
+            if slot.as_ref().is_some_and(|sample| {
+                sample.expires_at.is_some_and(|expires| now >= expires)
+                    && sample
+                        .last_play
+                        .is_none_or(|last| now.saturating_duration_since(last) >= sample.duration)
+            }) {
+                *slot = None;
+            }
+        }
+        for (index, slot) in self.pools.iter_mut().enumerate() {
+            if slot.as_ref().is_some_and(|pool| {
+                !self
+                    .samples
+                    .iter()
+                    .flatten()
+                    .any(|sample| sample.pool == index)
+                    && pool.voices.iter().all(|voice| voice.busy_until <= now)
+            }) {
+                let pool = slot.take().unwrap();
+                for voice in pool.voices {
+                    // SAFETY: No cached sample references this pool and all scheduled
+                    // playback has finished. Detaching releases the engine's node ownership.
+                    unsafe {
+                        voice.node.stop();
+                        self.engine.detachNode(&voice.node);
+                    }
+                }
+            }
         }
     }
 
@@ -243,7 +355,9 @@ impl Player {
             return;
         }
         let now = Instant::now();
-        let sample = &mut self.samples[index];
+        let Some(sample) = self.samples[index].as_mut() else {
+            return;
+        };
         // ponytail: per-file 15ms gate; refine its scope after the full cache key is recovered.
         if sample
             .last_play
@@ -252,6 +366,8 @@ impl Player {
             return;
         }
         let voice = self.pools[sample.pool]
+            .as_mut()
+            .expect("cached sample voice pool")
             .voices
             .iter_mut()
             .min_by_key(|voice| voice.busy_until)
@@ -336,4 +452,148 @@ pub fn check(root: &Path, language: Language) -> Result<(), String> {
         }
         Ok(())
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn running_engine_accepts_new_profile_formats_and_schedules_playback() {
+        autoreleasepool(|_| {
+            let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("assets/sounds");
+            let mut player = Player::new();
+            player.start(Language::English).unwrap();
+            for (keyboard, mouse) in [(0, 1), (1, 2), (15, 15), (39, 0)] {
+                let profile = Profile(keyboard);
+                let mouse = MouseProfile(mouse);
+                player
+                    .select_profiles(&root, profile, mouse, Language::English, Instant::now())
+                    .unwrap();
+                for index in [profile.sample_index(0, true), mouse.sample_index(true)]
+                    .into_iter()
+                    .flatten()
+                {
+                    player.play(index, 1);
+                    assert!(player.samples[index].as_ref().unwrap().last_play.is_some());
+                }
+            }
+        });
+    }
+
+    #[test]
+    fn profile_cache_loads_only_selected_sounds_reuses_and_expires_them() {
+        autoreleasepool(|_| {
+            let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("assets/sounds");
+            let now = Instant::now();
+            let mut player = Player::new();
+            let cached = |player: &Player| player.samples.iter().flatten().count();
+            assert_eq!(cached(&player), 0);
+            let first_count =
+                Profile(0).sample_indices().count() + MouseProfile(1).sample_indices().count();
+            let second_count =
+                Profile(1).sample_indices().count() + MouseProfile(2).sample_indices().count();
+            player
+                .select_profiles(&root, Profile(0), MouseProfile(1), Language::English, now)
+                .unwrap();
+            assert_eq!(cached(&player), first_count);
+            assert!(first_count < catalog::files().count());
+            let first = Profile(0).sample_indices().next().unwrap();
+            let buffer =
+                &*player.samples[first].as_ref().unwrap().buffer as *const AVAudioPCMBuffer;
+            player
+                .select_profiles(
+                    &root,
+                    Profile(1),
+                    MouseProfile(2),
+                    Language::English,
+                    now + Duration::from_secs(1),
+                )
+                .unwrap();
+            assert_eq!(cached(&player), first_count + second_count);
+            player
+                .select_profiles(
+                    &root,
+                    Profile(0),
+                    MouseProfile(1),
+                    Language::English,
+                    now + Duration::from_secs(2),
+                )
+                .unwrap();
+            assert_eq!(
+                &*player.samples[first].as_ref().unwrap().buffer as *const AVAudioPCMBuffer,
+                buffer
+            );
+            player
+                .select_profiles(
+                    &root,
+                    Profile(1),
+                    MouseProfile(2),
+                    Language::English,
+                    now + Duration::from_secs(3),
+                )
+                .unwrap();
+            player.evict_expired(now + Duration::from_secs(62));
+            assert_eq!(cached(&player), first_count + second_count);
+            // A scheduled tail must finish even after the inactive cache entry expires.
+            let tail = player.samples[first].as_mut().unwrap();
+            tail.last_play = Some(now + Duration::from_secs(63));
+            tail.duration = Duration::from_secs(2);
+            player.evict_expired(now + Duration::from_secs(64));
+            assert_eq!(cached(&player), second_count + 1);
+            player.evict_expired(now + Duration::from_secs(66));
+            assert_eq!(cached(&player), second_count);
+            assert!(player.samples[first].is_none());
+            for (index, pool) in player.pools.iter().enumerate() {
+                assert!(
+                    !pool.is_some()
+                        || player
+                            .samples
+                            .iter()
+                            .flatten()
+                            .any(|sample| sample.pool == index)
+                );
+            }
+            // Active sounds never expire, including while the user is idle.
+            player.evict_expired(now + Duration::from_secs(3600));
+            assert_eq!(cached(&player), second_count);
+            player
+                .select_profiles(
+                    &root,
+                    Profile(0),
+                    MouseProfile(0),
+                    Language::English,
+                    now + Duration::from_secs(3601),
+                )
+                .unwrap();
+            player.evict_expired(now + Duration::from_secs(3662));
+            assert_eq!(cached(&player), Profile(0).sample_indices().count());
+            // The decoder needs only the selected profile, even if unrelated
+            // sounds are missing or malformed. --check still validates all WAVs.
+            let partial =
+                std::env::temp_dir().join(format!("soundy-cache-test-{}", std::process::id()));
+            std::fs::create_dir_all(&partial).unwrap();
+            for index in Profile(0).sample_indices() {
+                let name = catalog::files().nth(index).unwrap();
+                std::fs::copy(root.join(name), partial.join(name)).unwrap();
+            }
+            let unrelated = catalog::files()
+                .nth(Profile(1).sample_indices().next().unwrap())
+                .unwrap();
+            std::fs::write(partial.join(unrelated), b"not a WAV").unwrap();
+            let mut partial_player = Player::new();
+            partial_player
+                .select_profiles(
+                    &partial,
+                    Profile(0),
+                    MouseProfile(0),
+                    Language::English,
+                    now,
+                )
+                .unwrap();
+            assert_eq!(cached(&partial_player), Profile(0).sample_indices().count());
+            assert!(check(&partial, Language::English).is_err());
+            std::fs::remove_dir_all(partial).unwrap();
+        });
+    }
 }

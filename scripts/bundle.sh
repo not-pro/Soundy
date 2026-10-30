@@ -2,6 +2,7 @@
 set -eu
 cd "$(dirname "$0")/.."
 (cd assets/sounds && shasum -a 256 -c manifest.sha256 > /dev/null)
+sparkle=$(sh scripts/setup-sparkle.sh)
 cargo build --release --locked --offline
 version=$(cargo metadata --locked --offline --no-deps --format-version 1 | python3 -c 'import json,sys; print(json.load(sys.stdin)["packages"][0]["version"])')
 # Apple's bundle version fields use the numeric part of a Cargo SemVer.
@@ -14,9 +15,13 @@ mv "$bundle/Contents/MacOS/soundy.new" "$bundle/Contents/MacOS/soundy"
 cp macos/Info.plist "$bundle/Contents/Info.plist"
 mkdir -p "$bundle/Contents/Resources"
 cp assets/icons/Soundy.icns "$bundle/Contents/Resources/Soundy.icns"
+cp "$sparkle/LICENSE" "$bundle/Contents/Resources/Sparkle-LICENSE.txt"
 ditto assets/sounds "$bundle/Contents/Resources/Sounds"
+mkdir -p "$bundle/Contents/Frameworks"
+ditto "$sparkle/Sparkle.framework" "$bundle/Contents/Frameworks/Sparkle.framework"
 /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $bundle_version" "$bundle/Contents/Info.plist"
 /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $bundle_version" "$bundle/Contents/Info.plist"
+/usr/libexec/PlistBuddy -c "Set :SUFeedURL https://github.com/not-pro/Soundy/releases/latest/download/appcast-$(uname -m).xml" "$bundle/Contents/Info.plist"
 codesign --force --sign - --identifier dev.soundy.app "$bundle"
-codesign --verify --strict "$bundle"
+codesign --verify --deep --strict "$bundle"
 printf 'Built %s/dist/Soundy.app\n' "$PWD"

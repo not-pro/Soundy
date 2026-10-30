@@ -9,10 +9,17 @@
   <key>CFBundleDevelopmentRegion</key><string>en</string>
   <key>CFBundleLocalizations</key><array><string>en</string><string>ru</string><string>zh-Hans</string></array>
   <key>CFBundleIconFile</key><string>Soundy</string>
-  <key>CFBundleShortVersionString</key><string>1.5.0</string>
-  <key>CFBundleVersion</key><string>1.5.0</string>
+  <key>CFBundleShortVersionString</key><string>1.6.0</string>
+  <key>CFBundleVersion</key><string>1.6.0</string>
   <key>LSMinimumSystemVersion</key><string>13.0</string>
   <key>LSUIElement</key><true/>
   <key>NSPrincipalClass</key><string>NSApplication</string>
   <key>NSHighResolutionCapable</key><true/>
+  <key>SUEnableAutomaticChecks</key><false/>
+  <key>SUFeedURL</key><string>https://github.com/not-pro/Soundy/releases/latest/download/appcast-arm64.xml</string>
+  <key>SURequireSignedFeed</key><true/>
+  <key>SUVerifyUpdateBeforeExtraction</key><true/>
+  <key>SUAutomaticallyUpdate</key><false/>
+  <key>SUAllowsAutomaticUpdates</key><false/>
+  <key>SUPublicEDKey</key><string>b+NRRzxLC+0OA1iVhXBp84RPOt+ANqnxA9fGp0r0Hy4=</string>
 </dict></plist>

@@ -95,6 +95,7 @@ messages! {
     Fun => ["Fun", "Эффекты", "趣味音效"],
     Typewriters => ["Typewriters", "Печатные машинки", "打字机"],
     LaunchAtLogin => ["Launch at Login", "Запускать при входе в систему", "登录时启动"],
+    UpdateAvailable => ["Update Available", "Доступно обновление", "有可用更新"],
     ApproveLogin => ["Allow in Login Items…", "Разрешить в объектах входа…", "在登录项中允许…"],
     LoginFailed => ["Could Not Change Launch at Login", "Не удалось изменить автозапуск", "无法更改登录时启动设置"],
     Volume => ["Volume", "Громкость", "音量"],

@@ -10,6 +10,8 @@ mod input;
 mod login;
 #[cfg(target_os = "macos")]
 mod ui;
+#[cfg(target_os = "macos")]
+mod update;
 
 #[cfg(not(target_os = "macos"))]
 compile_error!("Soundy currently supports macOS 13+ only");

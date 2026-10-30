@@ -82,6 +82,13 @@ impl Profile {
         }
     }
 
+    pub fn sample_indices(self) -> impl Iterator<Item = usize> {
+        let prefix = KEYBOARDS[self.0 as usize].1;
+        files()
+            .enumerate()
+            .filter_map(move |(index, file)| file.starts_with(prefix).then_some(index))
+    }
+
     pub fn sample_index(self, keycode: u16, pressed: bool) -> Option<usize> {
         let prefix = KEYBOARDS[self.0 as usize].1;
         let group = files()
@@ -120,6 +127,12 @@ impl MouseProfile {
 
     pub fn from_index(index: usize) -> Self {
         Self(if index <= 15 { index as u8 } else { 0 })
+    }
+
+    pub fn sample_indices(self) -> impl Iterator<Item = usize> {
+        [self.sample_index(true), self.sample_index(false)]
+            .into_iter()
+            .flatten()
     }
 
     pub fn sample_index(self, pressed: bool) -> Option<usize> {

@@ -14,11 +14,15 @@ Soundy 常驻菜单栏。你可以分别选择键盘和鼠标音效并调节音�
 
 启用**登录时启动**即可在登录时自动运行 Soundy。如果 macOS 需要批准，点击**在登录项中允许…**可打开系统设置。
 
-无需账号、无需订阅，也没有使用时限。所有功能均在本地运行。
+Soundy 每次启动时都会在后台检查更新。如果有新版本，菜单中会出现**有可用更新: …**。点击即可下载、安装并重新启动 Soundy，无需再次运行 PKG 安装程序。检查更新时不会弹出对话框。
+
+内存中只加载当前键盘和鼠标配置所需的声音。切换后，旧音效会缓存 60 秒，然后释放，即使应用处于空闲状态也会清理。
+
+无需账号、无需订阅，也没有使用时限。音效在本地播放；更新检查会连接 GitHub。
 
 ## 开始使用
 
-1. 从[最新版本](https://github.com/n-bautin/Soundy/releases/latest)下载 `.pkg` 安装包：Apple Silicon 芯片的 Mac 请选择 `arm64`，Intel 芯片的 Mac 请选择 `x86_64`。
+1. 从[最新版本](https://github.com/not-pro/Soundy/releases/latest)下载 `.pkg` 安装包：Apple Silicon 芯片的 Mac 请选择 `arm64`，Intel 芯片的 Mac 请选择 `x86_64`。早于 1.6.0 的版本需要手动升级一次，之后即可在应用内更新。
 2. 打开安装程序，依次点击**“继续” → “安装”**，然后点击**“关闭”**。从“应用程序”启动 Soundy。你也可以下载 ZIP 压缩包手动安装。
 3. 在 Soundy 菜单中点击**“允许输入监控…”**，然后在 macOS 设置中授予权限。如果系统提示，请重新启动 Soundy。
 4. 选择**“键盘音效”**和**“鼠标音效”**，调节音量，然后开始打字。
@@ -42,4 +46,6 @@ cargo fetch --locked
 sh scripts/package.sh
 ```
 
-生成的 PKG、ZIP 和校验和文件位于 `dist/` 目录。安装程序页面由 `scripts/installer-pages.swift` 生成，配置位于 `macos/installer/`。如需重新生成图标，请运行 `swift scripts/export-icons.swift`。
+生成的 PKG、ZIP 和校验和文件位于 `dist/` 目录。首次构建会将固定版本的 Sparkle SDK 下载到 `target/` 并验证校验和。安装程序页面由 `scripts/installer-pages.swift` 生成，配置位于 `macos/installer/`。如需重新生成图标，请运行 `swift scripts/export-icons.swift`。
+
+发布标签时，GitHub Actions 还会通过 `scripts/appcast.sh` 生成签名更新源。私钥保存在 `SPARKLE_PRIVATE_KEY` Actions 密钥中，`macos/Info.plist` 的 `SUPublicEDKey` 只包含公钥。后续版本应继续使用同一签名密钥。

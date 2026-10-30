@@ -5,8 +5,10 @@ use std::{
 };
 
 use objc2::{
-    AnyThread, DefinedClass, MainThreadOnly, define_class, msg_send, rc::Retained,
-    runtime::ProtocolObject, sel,
+    AnyThread, DefinedClass, MainThreadOnly, define_class, msg_send,
+    rc::Retained,
+    runtime::{AnyObject, ProtocolObject},
+    sel,
 };
 use objc2_app_kit::{
     NSAccessibility, NSAlert, NSApplication, NSApplicationActivationPolicy, NSApplicationDelegate,
@@ -14,8 +16,8 @@ use objc2_app_kit::{
 };
 use objc2_core_graphics::{CGPreflightListenEventAccess, CGRequestListenEventAccess};
 use objc2_foundation::{
-    MainThreadMarker, NSData, NSNotification, NSObject, NSObjectProtocol, NSSize, NSString,
-    NSTimer, NSURL, NSUserDefaults, ns_string,
+    MainThreadMarker, NSArray, NSData, NSError, NSNotification, NSObject, NSObjectProtocol, NSSize,
+    NSString, NSTimer, NSURL, NSUserDefaults, ns_string,
 };
 
 use crate::{
@@ -24,6 +26,7 @@ use crate::{
     i18n::{Language, Text},
     input::InputTap,
     login,
+    update::Updater,
 };
 
 struct State {
@@ -35,6 +38,9 @@ struct State {
     menu: OnceCell<Retained<NSMenu>>,
     defaults: Retained<NSUserDefaults>,
     smoke_test: bool,
+    updater: OnceCell<Updater>,
+    update_version: RefCell<Option<String>>,
+    update_probe_finished: Cell<bool>,
 }
 
 define_class!(
@@ -69,12 +75,22 @@ define_class!(
             let _ = self.ivars().status.set(status);
             let _ = self.ivars().menu.set(menu);
             self.refresh();
+            // Alternate feeds are accepted only by the explicit smoke-test mode.
+            let test_feed = if self.ivars().smoke_test {
+                std::env::var("SOUNDY_UPDATE_TEST_FEED").ok()
+            } else { None };
+            if !self.ivars().smoke_test || test_feed.is_some() {
+                match Updater::start(self, test_feed.as_deref()) {
+                    Ok(updater) => { let _ = self.ivars().updater.set(updater); }
+                    Err(error) => eprintln!("Soundy update check: {error}"),
+                }
+            }
             if self.ivars().smoke_test {
                 // SAFETY: The target is retained by NSTimer until this one-shot invocation;
                 // smokeFinish: has the matching NSTimer action signature below.
                 unsafe {
                     NSTimer::scheduledTimerWithTimeInterval_target_selector_userInfo_repeats(
-                        0.25, self, sel!(smokeFinish:), None, false,
+                        if test_feed.is_some() { 5.0 } else { 0.25 }, self, sel!(smokeFinish:), None, false,
                     );
                 }
             }
@@ -93,9 +109,55 @@ define_class!(
     }
 
     impl Delegate {
+        #[unsafe(method(updater:didFindValidUpdate:))]
+        fn update_found(&self, _updater: &AnyObject, item: &AnyObject) {
+            // SAFETY: Sparkle passes SUAppcastItem, whose displayVersionString
+            // property is a non-null NSString. Delegate callbacks are main-thread.
+            let version: Retained<NSString> = unsafe { msg_send![item, displayVersionString] };
+            *self.ivars().update_version.borrow_mut() = Some(version.to_string());
+            self.refresh();
+        }
+
+        #[unsafe(method(installUpdate:))]
+        fn install_update(&self, _sender: &NSMenuItem) {
+            if let Some(updater) = self.ivars().updater.get() {
+                updater.install();
+            }
+        }
+
+        #[unsafe(method(updater:didFinishUpdateCycleForUpdateCheck:error:))]
+        fn update_probe_finished(&self, _updater: &AnyObject, _check: isize, error: Option<&NSError>) {
+            self.ivars().update_probe_finished.set(true);
+            if let Some(error) = error {
+                eprintln!("Soundy update check: {error}");
+            }
+        }
+
         #[unsafe(method(smokeFinish:))]
         fn smoke_finish(&self, _timer: &NSTimer) {
             let menu = self.ivars().menu.get().expect("menu created before timer");
+            if let Ok(expected) = std::env::var("SOUNDY_UPDATE_TEST_EXPECTED") {
+                assert!(self.ivars().updater.get().is_some(), "embedded updater must start");
+                assert!(self.ivars().update_probe_finished.get(), "background probe must finish");
+                let observed = self.ivars().update_version.borrow().clone();
+                assert_eq!(observed.as_deref(), if expected == "none" { None } else { Some(expected.as_str()) });
+                let app = NSApplication::sharedApplication(self.mtm());
+                // SAFETY: NSApplication.windows is an NSArray of NSWindow objects.
+                let windows: Retained<NSArray<AnyObject>> = unsafe { msg_send![&*app, windows] };
+                for window in windows {
+                    let visible: bool = unsafe { msg_send![&*window, isVisible] };
+                    if visible {
+                        let class = window.class().name().to_string_lossy();
+                        let title: Retained<NSString> = unsafe { msg_send![&*window, title] };
+                        let level: isize = unsafe { msg_send![&*window, level] };
+                        println!("Smoke visible window: {class}, title={title}, level={level}");
+                        assert!(class.contains("StatusBar"), "startup update checks must not display windows");
+                    }
+                }
+                *self.ivars().update_version.borrow_mut() = None;
+                self.refresh();
+                println!("OK: background update probe: {expected}; no windows shown");
+            }
             for language in Language::ALL {
                 let title = self.ivars().language.get().text(Text::LanguageMenu);
                 let language_menu = menu.itemWithTitle(&NSString::from_str(title)).unwrap().submenu().unwrap();
@@ -145,6 +207,15 @@ define_class!(
                 assert_eq!(login_item.state() == 1, matches!(login::status(), login::ENABLED | login::REQUIRES_APPROVAL));
                 // Smoke mode never starts the input tap, so Allow/Reconnect is present.
                 assert_eq!(menu.numberOfItems(), 10 + if login::status() == login::REQUIRES_APPROVAL { 1 } else { 0 });
+                *self.ivars().update_version.borrow_mut() = Some("99.0.0".into());
+                self.refresh();
+                let title = format!("{}: 99.0.0…", language.text(Text::UpdateAvailable));
+                let update_item = menu.itemWithTitle(&NSString::from_str(&title)).unwrap();
+                assert_eq!(update_item.action(), Some(sel!(installUpdate:)));
+                assert!(update_item.isEnabled());
+                *self.ivars().update_version.borrow_mut() = None;
+                self.refresh();
+                assert!(menu.itemWithTitle(&NSString::from_str(&title)).is_none());
                 let button = self.ivars().status.get().unwrap().button(self.mtm()).unwrap();
                 let image = button.image().unwrap();
                 assert!(image.isTemplate() && image.size() == NSSize::new(18.0, 18.0));
@@ -279,6 +350,9 @@ impl Delegate {
             tap: RefCell::new(None),
             status: OnceCell::new(),
             menu: OnceCell::new(),
+            updater: OnceCell::new(),
+            update_version: RefCell::new(None),
+            update_probe_finished: Cell::new(false),
         });
         unsafe { msg_send![super(this), init] }
     }
@@ -400,6 +474,15 @@ impl Delegate {
             );
         }
         menu.addItem(&NSMenuItem::separatorItem(self.mtm()));
+        if let Some(version) = self.ivars().update_version.borrow().as_ref() {
+            self.item(
+                menu,
+                &format!("{}: {version}…", language.text(Text::UpdateAvailable)),
+                Some(sel!(installUpdate:)),
+                0,
+                false,
+            );
+        }
         self.item(menu, language.text(Text::Quit), Some(sel!(quit:)), 0, false);
         if let Some(button) = self
             .ivars()
@@ -463,6 +546,9 @@ pub fn run(root: &Path, smoke_test: bool, language: Language) -> Result<(), Stri
     let controls = Arc::new(Controls::default());
     let worker = Worker::start(root, controls.clone(), language)?;
     let delegate = Delegate::new(mtm, controls, worker, smoke_test, language);
+    if let Some(worker) = delegate.ivars().worker.borrow().as_ref() {
+        let _ = worker.sender.try_send(Command::ProfilesChanged);
+    }
     app.setDelegate(Some(ProtocolObject::from_ref(&*delegate)));
     app.run();
     Ok(())

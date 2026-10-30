@@ -113,7 +113,7 @@ dependencies = [
 
 [[package]]
 name = "soundy"
-version = "1.5.0"
+version = "1.6.0"
 dependencies = [
  "objc2",
  "objc2-app-kit",
