@@ -23,6 +23,7 @@ use crate::{
     catalog::{MouseProfile, Profile},
     i18n::{Language, Text},
     input::InputTap,
+    login,
 };
 
 struct State {
@@ -101,7 +102,28 @@ define_class!(
                 self.select_language(sel!(selectLanguage:), &language_menu.itemAtIndex(language as isize).unwrap());
                 assert_eq!(Language::load(&self.ivars().defaults), language, "language preference must persist");
                 let submenu = |text| menu.itemWithTitle(&NSString::from_str(language.text(text))).unwrap().submenu().unwrap();
-                assert_eq!(submenu(Text::KeyboardSound).numberOfItems(), 40);
+                let keyboard_menu = submenu(Text::KeyboardSound);
+                assert_eq!(keyboard_menu.numberOfItems(), 47);
+                let mut index = 0;
+                for (category, count) in [(Text::Mechanical, 14), (Text::Electronic, 6), (Text::Fun, 11), (Text::Typewriters, 9)] {
+                    if index > 0 {
+                        assert!(keyboard_menu.itemAtIndex(index).unwrap().isSeparatorItem());
+                        index += 1;
+                    }
+                    let heading = keyboard_menu.itemAtIndex(index).unwrap();
+                    assert_eq!(heading.title().to_string(), language.text(category));
+                    assert!(!heading.isEnabled());
+                    index += 1;
+                    for profile in Profile::all().filter(|profile| profile.category() == category) {
+                        let item = keyboard_menu.itemAtIndex(index).unwrap();
+                        assert_eq!(item.title().to_string(), profile.name());
+                        assert_eq!(item.tag(), isize::from(profile.0));
+                        assert_eq!(item.action(), Some(sel!(selectProfile:)));
+                        index += 1;
+                    }
+                    assert_eq!(Profile::all().filter(|profile| profile.category() == category).count(), count);
+                }
+                assert_eq!(index, keyboard_menu.numberOfItems());
                 let mouse_menu = submenu(Text::MouseSound);
                 assert_eq!(mouse_menu.numberOfItems(), 16);
                 for index in [0, 1, 15] {
@@ -114,11 +136,15 @@ define_class!(
                     assert_eq!(item.title().to_string(), option.name());
                     assert_eq!(item.state(), if option == language { 1 } else { 0 });
                 }
-                for text in [Text::SoundsEnabled, Text::PreviewMouse, Text::PreviewKeyboard, Text::Volume, Text::Quit] {
+                for text in [Text::LaunchAtLogin, Text::Volume, Text::Quit] {
                     assert!(menu.itemWithTitle(&NSString::from_str(language.text(text))).is_some());
                 }
                 let permission_visible = menu.itemWithTitle(&NSString::from_str(language.text(Text::AllowInput))).is_some();
                 assert_ne!(permission_visible, CGPreflightListenEventAccess());
+                let login_item = menu.itemWithTitle(&NSString::from_str(language.text(Text::LaunchAtLogin))).unwrap();
+                assert_eq!(login_item.state() == 1, matches!(login::status(), login::ENABLED | login::REQUIRES_APPROVAL));
+                // Smoke mode never starts the input tap, so Allow/Reconnect is present.
+                assert_eq!(menu.numberOfItems(), 10 + if login::status() == login::REQUIRES_APPROVAL { 1 } else { 0 });
                 let button = self.ivars().status.get().unwrap().button(self.mtm()).unwrap();
                 let image = button.image().unwrap();
                 assert!(image.isTemplate() && image.size() == NSSize::new(18.0, 18.0));
@@ -129,14 +155,25 @@ define_class!(
             NSApplication::sharedApplication(self.mtm()).terminate(None);
         }
 
-        #[unsafe(method(toggle:))]
-        fn toggle(&self, _sender: &NSMenuItem) {
-            let controls = &self.ivars().controls;
-            let enabled = !controls.enabled.load(Ordering::Relaxed);
-            controls.enabled.store(enabled, Ordering::Relaxed);
-            self.ivars().defaults.setBool_forKey(enabled, ns_string!("enabled"));
+        #[unsafe(method(toggleLogin:))]
+        fn toggle_login(&self, _sender: &NSMenuItem) {
+            let enable = !matches!(login::status(), login::ENABLED | login::REQUIRES_APPROVAL);
+            let result = login::set_enabled(enable);
             self.refresh();
+            if enable && login::status() == login::REQUIRES_APPROVAL {
+                login::open_settings();
+            } else if let Err(error) = result {
+                let alert = NSAlert::new(self.mtm());
+                let language = self.ivars().language.get();
+                alert.setMessageText(&NSString::from_str(language.text(Text::LoginFailed)));
+                alert.setInformativeText(&error.localizedDescription());
+                alert.addButtonWithTitle(&NSString::from_str(language.text(Text::OK)));
+                alert.runModal();
+            }
         }
+
+        #[unsafe(method(approveLogin:))]
+        fn approve_login(&self, _sender: &NSMenuItem) { login::open_settings(); }
 
         #[unsafe(method(selectProfile:))]
         fn select_profile(&self, sender: &NSMenuItem) {
@@ -156,20 +193,12 @@ define_class!(
             self.refresh();
         }
 
-        #[unsafe(method(previewMouse:))]
-        fn preview_mouse(&self, _sender: &NSMenuItem) { self.play_mouse_preview(); }
-
         #[unsafe(method(selectVolume:))]
         fn select_volume(&self, sender: &NSMenuItem) {
             let volume = sender.tag().clamp(0, 100) as u8;
             self.ivars().controls.volume.store(volume, Ordering::Relaxed);
             self.ivars().defaults.setInteger_forKey(volume.into(), ns_string!("volume"));
             self.refresh();
-        }
-
-        #[unsafe(method(preview:))]
-        fn preview(&self, _sender: &NSMenuItem) {
-            self.play_preview();
         }
 
         #[unsafe(method(permission:))]
@@ -224,12 +253,6 @@ impl Delegate {
         } else {
             NSUserDefaults::standardUserDefaults()
         };
-        if defaults.objectForKey(ns_string!("enabled")).is_some() {
-            controls.enabled.store(
-                defaults.boolForKey(ns_string!("enabled")),
-                Ordering::Relaxed,
-            );
-        }
         controls.profile.store(
             Profile::from_index(defaults.integerForKey(ns_string!("profile")).max(0) as usize).0,
             Ordering::Relaxed,
@@ -283,14 +306,6 @@ impl Delegate {
         };
         menu.removeAllItems();
         let controls = &self.ivars().controls;
-        let enabled = controls.enabled.load(Ordering::Relaxed);
-        self.item(
-            menu,
-            language.text(Text::SoundsEnabled),
-            Some(sel!(toggle:)),
-            0,
-            enabled,
-        );
         if !granted {
             self.item(
                 menu,
@@ -312,16 +327,29 @@ impl Delegate {
             eprintln!("Soundy: {error}");
             self.item(menu, &error, None, 0, false);
         }
-        menu.addItem(&NSMenuItem::separatorItem(self.mtm()));
+        if menu.numberOfItems() > 0 {
+            menu.addItem(&NSMenuItem::separatorItem(self.mtm()));
+        }
         let keyboard_menu = self.submenu(menu, language.text(Text::KeyboardSound));
-        for profile in Profile::all() {
-            self.item(
-                &keyboard_menu,
-                profile.name(),
-                Some(sel!(selectProfile:)),
-                isize::from(profile.0),
-                controls.profile.load(Ordering::Relaxed) == profile.0,
-            );
+        for category in [
+            Text::Mechanical,
+            Text::Electronic,
+            Text::Fun,
+            Text::Typewriters,
+        ] {
+            if keyboard_menu.numberOfItems() > 0 {
+                keyboard_menu.addItem(&NSMenuItem::separatorItem(self.mtm()));
+            }
+            self.item(&keyboard_menu, language.text(category), None, 0, false);
+            for profile in Profile::all().filter(|profile| profile.category() == category) {
+                self.item(
+                    &keyboard_menu,
+                    profile.name(),
+                    Some(sel!(selectProfile:)),
+                    isize::from(profile.0),
+                    controls.profile.load(Ordering::Relaxed) == profile.0,
+                );
+            }
         }
         let mouse_menu = self.submenu(menu, language.text(Text::MouseSound));
         for profile in MouseProfile::all() {
@@ -333,20 +361,6 @@ impl Delegate {
                 controls.mouse_profile.load(Ordering::Relaxed) == profile.0,
             );
         }
-        self.item(
-            menu,
-            language.text(Text::PreviewMouse),
-            Some(sel!(previewMouse:)),
-            0,
-            false,
-        );
-        self.item(
-            menu,
-            language.text(Text::PreviewKeyboard),
-            Some(sel!(preview:)),
-            0,
-            false,
-        );
         menu.addItem(&NSMenuItem::separatorItem(self.mtm()));
         let volume_menu = self.submenu(menu, language.text(Text::Volume));
         for volume in [0, 10, 25, 50, 75, 100] {
@@ -368,6 +382,23 @@ impl Delegate {
                 option == language,
             );
         }
+        let login_status = login::status();
+        self.item(
+            menu,
+            language.text(Text::LaunchAtLogin),
+            Some(sel!(toggleLogin:)),
+            0,
+            matches!(login_status, login::ENABLED | login::REQUIRES_APPROVAL),
+        );
+        if login_status == login::REQUIRES_APPROVAL {
+            self.item(
+                menu,
+                language.text(Text::ApproveLogin),
+                Some(sel!(approveLogin:)),
+                0,
+                false,
+            );
+        }
         menu.addItem(&NSMenuItem::separatorItem(self.mtm()));
         self.item(menu, language.text(Text::Quit), Some(sel!(quit:)), 0, false);
         if let Some(button) = self
@@ -378,17 +409,13 @@ impl Delegate {
         {
             button.setTitle(&NSString::from_str(if !granted || !listening {
                 " !"
-            } else if enabled {
-                ""
             } else {
-                " Ⅱ"
+                ""
             }));
             button.setToolTip(Some(&NSString::from_str(if !granted || !listening {
                 language.text(Text::InputUnavailable)
-            } else if enabled {
-                language.text(Text::Tooltip)
             } else {
-                language.text(Text::Paused)
+                language.text(Text::Tooltip)
             })));
         }
     }

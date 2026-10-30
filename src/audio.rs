@@ -2,7 +2,7 @@ use std::{
     path::Path,
     sync::{
         Arc,
-        atomic::{AtomicBool, AtomicU8, Ordering},
+        atomic::{AtomicU8, Ordering},
         mpsc::{self, SyncSender},
     },
     thread::{self, JoinHandle},
@@ -26,7 +26,6 @@ use crate::{
 };
 
 pub struct Controls {
-    pub enabled: AtomicBool,
     pub profile: AtomicU8,
     pub mouse_profile: AtomicU8,
     pub volume: AtomicU8,
@@ -35,7 +34,6 @@ pub struct Controls {
 impl Default for Controls {
     fn default() -> Self {
         Self {
-            enabled: AtomicBool::new(true),
             profile: AtomicU8::new(0),
             mouse_profile: AtomicU8::new(0),
             volume: AtomicU8::new(25),
@@ -95,17 +93,16 @@ impl Worker {
                             let mouse = MouseProfile::from_index(
                                 controls.mouse_profile.load(Ordering::Relaxed).into(),
                             );
-                            let active = controls.enabled.load(Ordering::Relaxed);
                             let index = match command {
                                 Command::Key {
                                     keycode,
                                     pressed,
                                     at,
-                                } if active && at.elapsed() < Duration::from_millis(100) => {
+                                } if at.elapsed() < Duration::from_millis(100) => {
                                     profile.sample_index(keycode, pressed)
                                 }
                                 Command::Mouse { pressed, at }
-                                    if active && at.elapsed() < Duration::from_millis(100) =>
+                                    if at.elapsed() < Duration::from_millis(100) =>
                                 {
                                     mouse.sample_index(pressed)
                                 }

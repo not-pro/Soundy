@@ -7,6 +7,8 @@ mod i18n;
 #[cfg(target_os = "macos")]
 mod input;
 #[cfg(target_os = "macos")]
+mod login;
+#[cfg(target_os = "macos")]
 mod ui;
 
 #[cfg(not(target_os = "macos"))]

@@ -71,7 +71,7 @@ impl Language {
 // Every message has all three translations; adding a message requires the full row.
 macro_rules! messages {
     ($($key:ident => [$en:expr, $ru:expr, $zh:expr]),* $(,)?) => {
-        #[derive(Clone, Copy)]
+        #[derive(Clone, Copy, PartialEq, Eq)]
         pub enum Text { $($key),* }
 
         impl Language {
@@ -86,13 +86,17 @@ macro_rules! messages {
 }
 
 messages! {
-    SoundsEnabled => ["Sounds Enabled", "Звуки включены", "启用音效"],
     AllowInput => ["Allow Input Monitoring…", "Разрешить мониторинг ввода…", "允许输入监控…"],
     RetryInput => ["Reconnect Input…", "Повторить подключение ввода…", "重新连接输入设备…"],
     KeyboardSound => ["Keyboard Sound", "Звук клавиатуры", "键盘音效"],
     MouseSound => ["Mouse Sound", "Звук мыши", "鼠标音效"],
-    PreviewMouse => ["Preview Mouse Sound", "Послушать мышь", "试听鼠标音效"],
-    PreviewKeyboard => ["Preview Keyboard Sound", "Послушать звук", "试听键盘音效"],
+    Mechanical => ["Mechanical", "Механические", "机械键盘"],
+    Electronic => ["Electronic", "Электронные", "电子音效"],
+    Fun => ["Fun", "Эффекты", "趣味音效"],
+    Typewriters => ["Typewriters", "Печатные машинки", "打字机"],
+    LaunchAtLogin => ["Launch at Login", "Запускать при входе в систему", "登录时启动"],
+    ApproveLogin => ["Allow in Login Items…", "Разрешить в объектах входа…", "在登录项中允许…"],
+    LoginFailed => ["Could Not Change Launch at Login", "Не удалось изменить автозапуск", "无法更改登录时启动设置"],
     Volume => ["Volume", "Громкость", "音量"],
     LanguageMenu => ["Language", "Язык", "语言"],
     Quit => ["Quit Soundy", "Завершить Soundy", "退出 Soundy"],
@@ -100,7 +104,6 @@ messages! {
     Click => ["Click", "Клик", "点击"],
     Tooltip => ["Soundy — keyboard and mouse sounds", "Soundy — звуки клавиатуры и мыши", "Soundy — 键盘和鼠标音效"],
     InputUnavailable => ["Soundy — input monitoring unavailable", "Soundy — мониторинг ввода недоступен", "Soundy — 输入监控不可用"],
-    Paused => ["Soundy — paused", "Soundy — пауза", "Soundy — 已暂停"],
     StartFailed => ["Could Not Start Soundy", "Не удалось запустить Soundy", "无法启动 Soundy"],
     OK => ["OK", "ОК", "好"],
     InputPermissionRequired => ["Input Monitoring permission is required", "Требуется доступ к мониторингу ввода", "需要授予输入监控权限"],

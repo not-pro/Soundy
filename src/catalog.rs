@@ -72,6 +72,16 @@ impl Profile {
         KEYBOARDS[self.0 as usize].0
     }
 
+    pub fn category(self) -> Text {
+        match KEYBOARDS[self.0 as usize].1.split_once('_').unwrap().0 {
+            "m" => Text::Mechanical,
+            "e" => Text::Electronic,
+            "fun" => Text::Fun,
+            "t" => Text::Typewriters,
+            _ => unreachable!("every keyboard has a known category prefix"),
+        }
+    }
+
     pub fn sample_index(self, keycode: u16, pressed: bool) -> Option<usize> {
         let prefix = KEYBOARDS[self.0 as usize].1;
         let group = files()
@@ -155,6 +165,19 @@ mod tests {
         let names: Vec<_> = files().collect();
         assert_eq!(names.len(), 240);
         assert_eq!(names.iter().copied().collect::<HashSet<_>>().len(), 240);
+        for (category, count) in [
+            (Text::Mechanical, 14),
+            (Text::Electronic, 6),
+            (Text::Fun, 11),
+            (Text::Typewriters, 9),
+        ] {
+            assert_eq!(
+                Profile::all()
+                    .filter(|profile| profile.category() == category)
+                    .count(),
+                count
+            );
+        }
         validate(
             &Path::new(env!("CARGO_MANIFEST_DIR")).join("assets/sounds"),
             Language::English,

@@ -1,13 +1,13 @@
 [package]
 name = "soundy"
-version = "1.4.0"
+version = "1.5.0"
 edition = "2024"
 rust-version = "1.85"
 description = "Keyboard and mouse sounds for macOS"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6.3"
-objc2-foundation = { version = "0.3.2", default-features = false, features = ["std", "NSObject", "NSString", "NSURL", "NSUserDefaults", "NSNotification", "NSTimer", "NSLocale", "NSArray"] }
+objc2-foundation = { version = "0.3.2", default-features = false, features = ["std", "NSObject", "NSString", "NSURL", "NSUserDefaults", "NSNotification", "NSTimer", "NSLocale", "NSArray", "NSError"] }
 objc2-app-kit = { version = "0.3.2", default-features = false, features = ["std", "NSApplication", "NSRunningApplication", "NSMenu", "NSMenuItem", "NSCell", "NSStatusBar", "NSStatusItem", "NSStatusBarButton", "NSButton", "NSControl", "NSResponder", "NSView", "NSAlert", "NSWorkspace", "NSImage", "NSAccessibilityProtocols", "objc2-core-foundation"] }
 objc2-avf-audio = { version = "0.3.2", default-features = false, features = ["std", "AVAudioEngine", "AVAudioNode", "AVAudioIONode", "AVAudioMixerNode", "AVAudioFile", "AVAudioBuffer", "AVAudioPlayerNode", "AVAudioMixing", "AVAudioFormat", "AVAudioTime", "AVAudioTypes", "AVAudioUnit", "AVAudioUnitEffect", "objc2-audio-toolbox", "block2"] }
 objc2-core-graphics = { version = "0.3.2", default-features = false, features = ["std", "CGEvent", "CGEventTypes"] }

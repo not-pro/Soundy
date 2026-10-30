@@ -10,7 +10,9 @@ Soundy adds keyboard and mouse sounds to macOS. Mechanical keys, typewriters, el
 
 Pick a sound to match your mood: **40 keyboard profiles and 15 mouse sound options**. All 240 sounds are bundled with the app — no extra downloads needed.
 
-Soundy lives in the menu bar. Choose keyboard and mouse sounds separately, preview them, adjust the volume, or pause playback. Your settings are saved between launches. You can turn off mouse sounds while keeping keyboard sounds enabled.
+Soundy lives in the menu bar. Choose keyboard and mouse sounds separately and adjust the volume. Keyboard profiles are grouped into **Mechanical, Electronic, Fun, and Typewriters** sections. Selecting a profile plays a sample. Your settings are saved between launches. You can turn off mouse sounds while keeping keyboard sounds enabled, or mute everything with **Volume → 0%**.
+
+Enable **Launch at Login** to start Soundy automatically when you sign in. If macOS requests approval, use **Allow in Login Items…** to open System Settings.
 
 No accounts, subscriptions, or time limits. Everything runs locally.
 
