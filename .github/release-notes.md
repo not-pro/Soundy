@@ -1,24 +1,24 @@
-## Soundy 1.7.0
+## Soundy 1.8.0
 
 ### English
 
-- New native orange glass settings window, styled to match the Soundy icon. Open it with **Open Soundy…** in the menu bar.
-- Choose keyboard and mouse profiles, volume, language, and launch at login; input permissions, login approval, available updates, and Quit are also accessible.
-- Closing the window releases it and its controls while Soundy keeps playing sounds in the menu bar. Reopening creates the UI on demand, without a web runtime or new dependencies.
-- Startup, including login and update restarts, stays tray-only. Existing settings and signed in-app updates are preserved.
+- Redesigned native settings: keyboard and mouse selectors with separate preview buttons, a continuous volume slider, RU / EN / 中文 buttons, and an orange launch-at-login toggle.
+- System Liquid Glass on macOS 26 and later, with native AppKit vibrancy on earlier versions. macOS controls the window shape and accessibility appearance; no painted opaque background or custom outer corner mask.
+- The bottom-right **…** button opens a popover with the running app version, **GitHub · not-pro**, and **Telegram · @nbautin**, with both service icons.
+- The header contains only the Soundy icon and name. Closing the window keeps sounds running and releases the settings UI.
 
 ### Русский
 
-- Нативное окно настроек **orange glass** в стиле иконки Soundy. Открывается пунктом **«Открыть Soundy…»** в строке меню.
-- Профили клавиатуры и мыши, громкость, язык и автозапуск; также доступны разрешения ввода, подтверждение автозапуска, доступное обновление и выход.
-- При закрытии окно и элементы управления освобождаются, Soundy продолжает воспроизводить звуки в трее. При открытии UI создаётся заново, без веб-движка и новых зависимостей.
-- Запуск, включая вход в систему и перезапуск после обновления, остаётся только в трее. Настройки и подписанные обновления сохраняются.
+- Новый нативный интерфейс настроек: выбор звуков клавиатуры и мыши с отдельными кнопками прослушивания, плавный ползунок громкости, кнопки RU / EN / 中文 и оранжевый переключатель автозапуска.
+- Системный Liquid Glass в macOS 26 и новее, нативная прозрачность AppKit — в более ранних версиях. Формой окна и доступностью управляет macOS; непрозрачная нарисованная подложка и собственная маска внешних углов удалены. Настройка «Уменьшение прозрачности» учитывается.
+- Кнопка **…** справа внизу открывает окно с текущей версией, **GitHub · not-pro** и **Telegram · @nbautin**, с иконками обоих сервисов.
+- В заголовке только иконка и название Soundy. Закрытие окна освобождает UI, звуки продолжают работать.
 
 ### 简体中文
 
-- 新增原生橙色玻璃设置窗口，与 Soundy 图标风格一致。通过菜单栏的**打开 Soundy…**打开。
-- 可选择键盘和鼠标音效、音量、语言和登录时启动；也可访问输入权限、登录项批准、可用更新及退出操作。
-- 关闭窗口会释放窗口及控件，音效继续运行。重新打开时按需创建 UI，无需网页运行时或新依赖。
-- 启动、登录及更新后重启均仅显示菜单栏图标。保留已有设置及签名应用内更新。
+- 全新原生设置界面：键盘和鼠标音效选择器、独立试听按钮、连续音量滑块、RU / EN / 中文语言按钮及橙色登录启动开关。
+- macOS 26 及更新版本使用系统 Liquid Glass，旧版本使用 AppKit 半透明效果。窗口形状和辅助功能外观由 macOS 控制；移除了不透明背景和自定义外部圆角遮罩，并遵循“减少透明度”设置。
+- 右下角 **…** 按钮显示当前版本、**GitHub · not-pro** 和 **Telegram · @nbautin**，附带两个服务的图标。
+- 标题仅保留 Soundy 图标和名称。关闭窗口释放设置 UI，音效继续运行。
 
 Download the **PKG** for your Mac: **arm64** for Apple Silicon, **x86_64** for Intel. ZIP archives, signed update feeds, and SHA-256 checksums are included. Requires macOS 13 or later. The app is ad-hoc signed, without Apple notarization.

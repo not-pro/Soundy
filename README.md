@@ -12,7 +12,7 @@ Pick a sound to match your mood: **40 keyboard profiles and 15 mouse sound optio
 
 Soundy lives in the menu bar. Choose keyboard and mouse sounds separately and adjust the volume. Keyboard profiles are grouped into **Mechanical, Electronic, Fun, and Typewriters** sections. Selecting a profile plays a sample. Your settings are saved between launches. You can turn off mouse sounds while keeping keyboard sounds enabled, or mute everything with **Volume → 0%**.
 
-Use **Open Soundy…** in the menu bar for the orange glass settings window. It offers the same settings and actions as the menu. Closing the window keeps sounds running and releases the window and its controls. Soundy always starts in the menu bar, including at login; the settings window is created only when opened.
+Use **Open Soundy…** in the menu bar for the native glass settings window. On macOS 26 and later, it uses system Liquid Glass; earlier versions use native AppKit vibrancy. macOS controls the window corners and transparency, including the Reduce Transparency accessibility setting. Preview keyboard and mouse sounds separately, adjust the volume with a slider, and switch languages in one click. The **…** button opens a popover with the app version, [GitHub](https://github.com/not-pro), and [Telegram](https://nbautin.t.me). Closing the window keeps sounds running and releases the window and its controls. Soundy always starts in the menu bar, including at login; the settings window is created only when opened.
 
 Enable **Launch at Login** to start Soundy automatically when you sign in. If macOS requests approval, use **Allow in Login Items…** to open System Settings.
 

@@ -12,8 +12,8 @@ use objc2::{
 };
 use objc2_app_kit::{
     NSAccessibility, NSAlert, NSApplication, NSApplicationActivationPolicy, NSApplicationDelegate,
-    NSButton, NSImage, NSMenu, NSMenuDelegate, NSMenuItem, NSPopUpButton, NSStatusBar,
-    NSStatusItem, NSWindow, NSWindowDelegate, NSWorkspace,
+    NSButton, NSImage, NSMenu, NSMenuDelegate, NSMenuItem, NSPopUpButton, NSPopover, NSSlider,
+    NSStatusBar, NSStatusItem, NSWindow, NSWindowDelegate, NSWorkspace,
 };
 use objc2_core_graphics::{CGPreflightListenEventAccess, CGRequestListenEventAccess};
 use objc2_foundation::{
@@ -32,6 +32,7 @@ use crate::{
 
 struct State {
     window: RefCell<Option<Retained<NSWindow>>>,
+    about: RefCell<Option<Retained<NSPopover>>>,
     controls: Arc<Controls>,
     language: Cell<Language>,
     worker: RefCell<Option<Worker>>,
@@ -108,6 +109,7 @@ define_class!(
     unsafe impl NSWindowDelegate for Delegate {
         #[unsafe(method(windowWillClose:))]
         fn window_will_close(&self, _notification: &NSNotification) {
+            if let Some(about) = self.ivars().about.borrow_mut().take() { about.close(); }
             if let Some(window) = self.ivars().window.borrow_mut().take() {
                 // Release after AppKit finishes the close event, not inside its callback.
                 let _ = Retained::autorelease_ptr(window);
@@ -147,6 +149,55 @@ define_class!(
                     3 => self.select_language(sel!(selectLanguage:), &item),
                     _ => {},
                 }
+            }
+        }
+
+        #[unsafe(method(closeSettings:))]
+        fn close_settings(&self, _sender: &AnyObject) {
+            let window = self.ivars().window.borrow().clone();
+            if let Some(window) = window { window.close(); }
+        }
+
+        #[unsafe(method(settingsPreview:))]
+        fn settings_preview(&self, sender: &NSButton) {
+            if sender.tag() == 0 { self.play_preview(); } else { self.play_mouse_preview(); }
+        }
+
+        #[unsafe(method(settingsLanguage:))]
+        fn settings_language(&self, sender: &NSButton) {
+            if let Some(language) = Language::ALL.get(sender.tag() as usize) {
+                self.ivars().language.set(*language);
+                language.save(&self.ivars().defaults);
+                self.refresh();
+            }
+        }
+
+        #[unsafe(method(settingsVolume:))]
+        fn settings_volume(&self, sender: &NSSlider) {
+            let volume = sender.doubleValue().round().clamp(0.0, 100.0) as u8;
+            self.ivars().controls.volume.store(volume, Ordering::Relaxed);
+            self.ivars().defaults.setInteger_forKey(volume.into(), ns_string!("volume"));
+            if let Some(window) = self.ivars().window.borrow().as_ref() {
+                settings::sync_volume(window, self.ivars().language.get(), volume);
+            }
+        }
+
+        #[unsafe(method(showAbout:))]
+        fn show_about(&self, sender: &NSButton) {
+            if let Some(about) = self.ivars().about.borrow_mut().take() {
+                let shown = about.isShown();
+                about.close();
+                if shown { return; }
+            }
+            let menu = self.ivars().menu.get().unwrap();
+            *self.ivars().about.borrow_mut() = Some(settings::about(sender, self, menu, self.ivars().language.get()));
+        }
+
+        #[unsafe(method(openSocial:))]
+        fn open_social(&self, sender: &NSButton) {
+            let link = if sender.tag() == 0 { settings::GITHUB_URL } else { settings::TELEGRAM_URL };
+            if let Some(url) = NSURL::URLWithString(&NSString::from_str(link)) {
+                NSWorkspace::sharedWorkspace().openURL(&url);
             }
         }
 
@@ -276,21 +327,57 @@ define_class!(
                     self.open_settings(sel!(openSettings:), self);
                     let window = self.ivars().window.borrow().as_ref().unwrap().clone();
                     let weak = objc2::rc::Weak::from_retained(&window);
+                    assert!(window.styleMask().contains(objc2_app_kit::NSWindowStyleMask::Titled), "system window must own corner clipping");
+                    assert!(!window.isOpaque());
+                    if let Some(class) = objc2::runtime::AnyClass::get(c"NSGlassEffectView") {
+                        assert!(window.contentView().unwrap().isKindOfClass(class));
+                    }
                     self.open_settings(sel!(openSettings:), self);
                     assert!(std::ptr::eq(&**self.ivars().window.borrow().as_ref().unwrap(), &*window), "reuse the visible window");
-                    let view = window.contentView().unwrap().subviews().objectAtIndex(0);
+                    let view = settings::content(&window);
                     let popups: Vec<_> = view.subviews().iter().filter_map(|view| view.downcast::<NSPopUpButton>().ok()).collect();
-                    assert_eq!(popups.len(), 4);
-                    for (popup, value) in popups.iter().zip([6, 15, 25, language as isize]) {
+                    assert_eq!(popups.len(), 2);
+                    for (popup, value) in popups.iter().zip([6, 15]) {
                         assert!(popup.selectItemWithTag(value));
                         // Exercise the actual NSControl target/action route.
                         unsafe { popup.sendAction_to(popup.action(), popup.target().as_deref()); }
                     }
                     assert_eq!(self.ivars().defaults.integerForKey(ns_string!("profile")), 6);
                     assert_eq!(self.ivars().defaults.integerForKey(ns_string!("mouseProfile")), 15);
+                    let root = settings::content(&window);
+                    let slider = root.subviews().iter().find_map(|view| view.downcast::<NSSlider>().ok()).unwrap();
+                    for volume in [0.0, 37.0, 100.0, 25.0] {
+                        slider.setDoubleValue(volume);
+                        unsafe { slider.sendAction_to(slider.action(), slider.target().as_deref()); }
+                        assert_eq!(self.ivars().defaults.integerForKey(ns_string!("volume")), volume as isize);
+                        let percentage = root.subviews().iter().find_map(|view| view.downcast::<objc2_app_kit::NSTextField>().ok().filter(|label| label.tag() == settings::VOLUME_TAG)).unwrap();
+                        assert_eq!(percentage.stringValue().to_string(), format!("{volume}%"));
+                    }
+                    for option in Language::ALL {
+                        let root = settings::content(&window);
+                        let control = root.subviews().iter().find_map(|view| view.downcast::<NSButton>().ok().filter(|button| button.action() == Some(sel!(settingsLanguage:)) && button.tag() == option as isize)).unwrap();
+                        unsafe { control.sendAction_to(control.action(), control.target().as_deref()); }
+                        assert_eq!(Language::load(&self.ivars().defaults), option);
+                    }
+                    self.ivars().language.set(language);
+                    language.save(&self.ivars().defaults);
+                    self.refresh();
+                    let root = settings::content(&window);
+                    let about = root.subviews().iter().find_map(|view| view.downcast::<NSButton>().ok().filter(|button| button.action() == Some(sel!(showAbout:)))).unwrap();
+                    self.show_about(sel!(showAbout:), &about);
+                    let popover = self.ivars().about.borrow().as_ref().unwrap().clone();
+                    assert!(popover.isShown());
+                    let content = popover.contentViewController().unwrap().view();
+                    let links: Vec<_> = content.subviews().iter().filter_map(|view| view.downcast::<NSButton>().ok().filter(|button| button.action() == Some(sel!(openSocial:)))).collect();
+                    assert_eq!(links.len(), 2);
+                    assert!(links.iter().all(|button| button.image().is_some()));
+                    assert!(content.subviews().iter().filter_map(|view| view.downcast::<objc2_app_kit::NSTextField>().ok()).any(|label| label.stringValue().to_string().contains(env!("CARGO_PKG_VERSION"))));
+                    assert_eq!(settings::GITHUB_URL, "https://github.com/not-pro");
+                    assert_eq!(settings::TELEGRAM_URL, "https://nbautin.t.me");
                     assert_eq!(self.ivars().defaults.integerForKey(ns_string!("volume")), 25);
                     assert_eq!(Language::load(&self.ivars().defaults), language);
-                    window.performClose(None);
+                    self.close_settings(sel!(closeSettings:), self);
+                    assert!(self.ivars().about.borrow().is_none());
                     assert!(self.ivars().window.borrow().is_none(), "close must clear the UI owner");
                     assert!(self.ivars().worker.borrow().is_some(), "audio must survive closing UI");
                     weak
@@ -426,6 +513,7 @@ impl Delegate {
         let this = Self::alloc(mtm).set_ivars(State {
             controls,
             window: RefCell::new(None),
+            about: RefCell::new(None),
             language: Cell::new(language),
             defaults,
             smoke_test,
@@ -575,7 +663,17 @@ impl Delegate {
         }
         self.item(menu, language.text(Text::Quit), Some(sel!(quit:)), 0, false);
         if let Some(window) = self.ivars().window.borrow().as_ref() {
-            settings::populate(window, menu, self, language);
+            if let Some(about) = self.ivars().about.borrow_mut().take() {
+                about.close();
+            }
+            settings::populate(
+                window,
+                menu,
+                self,
+                language,
+                controls.volume.load(Ordering::Relaxed),
+                listening,
+            );
         }
         if let Some(button) = self
             .ivars()
