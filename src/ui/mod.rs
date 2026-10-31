@@ -411,6 +411,10 @@ define_class!(
         fn toggle_login(&self, _sender: &NSMenuItem) {
             let enable = !matches!(login::status(), login::ENABLED | login::REQUIRES_APPROVAL);
             let result = login::set_enabled(enable);
+            // Remember the intent so an update that drops the login item can restore it.
+            self.ivars()
+                .defaults
+                .setBool_forKey(enable, ns_string!("launchAtLogin"));
             self.refresh();
             if enable && login::status() == login::REQUIRES_APPROVAL {
                 login::open_settings();
@@ -521,6 +525,11 @@ impl Delegate {
                 defaults.integerForKey(ns_string!("volume")).clamp(0, 100) as u8,
                 Ordering::Relaxed,
             );
+        }
+        // Sparkle replaces the bundle on update; macOS drops the login item when the
+        // code identity changes, so restore the user's last explicit choice.
+        if defaults.boolForKey(ns_string!("launchAtLogin")) && login::status() == 0 {
+            let _ = login::set_enabled(true);
         }
         let this = Self::alloc(mtm).set_ivars(State {
             controls,

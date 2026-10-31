@@ -4,8 +4,6 @@ mod consts;
 mod core;
 #[cfg(target_os = "macos")]
 mod ui;
-#[cfg(target_os = "macos")]
-mod utils;
 
 #[cfg(not(target_os = "macos"))]
 compile_error!("Soundy currently supports macOS 13+ only");

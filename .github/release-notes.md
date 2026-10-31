@@ -1,15 +1,18 @@
-## Soundy 1.8.3
+## Soundy 1.8.5
 
 ### English
 
-- Internal restructuring: translations and configuration moved to JSON files; the source is split into `core`, `ui`, `utils` and `consts` modules. No user-facing changes.
+- Updates keep working: installing a new version no longer resets **Input Monitoring** access or turns off **Open at Login**. The app is now signed with a stable identity, so macOS recognises it as the same app after an update.
+- Removed unused Windows icon assets and folded single-use UI helpers back into their module.
 
 ### Русский
 
-- Внутренний рефакторинг: переводы и конфигурация вынесены в JSON-файлы; исходный код разделён на модули `core`, `ui`, `utils` и `consts`. Изменений для пользователя нет.
+- Обновления больше не сбрасывают настройки: после установки новой версии не нужно заново выдавать доступ к **Мониторингу ввода** и включать **Открывать при входе**. Приложение теперь подписано постоянной подписью, и macOS считает его тем же приложением после обновления.
+- Удалены неиспользуемые иконки для Windows, а вспомогательные функции интерфейса возвращены в свой модуль.
 
 ### 简体中文
 
-- 内部重构：翻译和配置移至 JSON 文件；源代码拆分为 `core`、`ui`、`utils` 和 `consts` 模块。无面向用户的更改。
+- 更新后不再重置设置：安装新版本后无需重新授予**输入监控**权限，也不必重新开启**登录时打开**。应用现在使用固定签名，因此 macOS 在更新后仍视其为同一个应用。
+- 移除了未使用的 Windows 图标资源，并把仅单处使用的界面辅助函数合并回其模块。
 
-Download the **PKG** for your Mac: **arm64** for Apple Silicon, **x86_64** for Intel. ZIP archives, signed update feeds, and SHA-256 checksums are included. Requires macOS 13 or later. The app is ad-hoc signed, without Apple notarization.
+Download the **PKG** for your Mac: **arm64** for Apple Silicon, **x86_64** for Intel. ZIP archives, signed update feeds, and SHA-256 checksums are included. Requires macOS 13 or later. The app is self-signed, without Apple notarization.

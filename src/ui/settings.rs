@@ -1,20 +1,22 @@
 use objc2::{
     AnyThread, DefinedClass, MainThreadOnly, define_class, msg_send,
     rc::{Allocated, Retained},
-    runtime::{AnyClass, AnyObject},
+    runtime::{AnyClass, AnyObject, Sel},
     sel,
 };
 use objc2_app_kit::*;
 use objc2_foundation::{
-    MainThreadMarker, NSCopying, NSData, NSObjectProtocol, NSRect, NSRectEdge, NSSize, NSString,
-    ns_string,
+    MainThreadMarker, NSCopying, NSData, NSObjectProtocol, NSPoint, NSRect, NSRectEdge, NSSize,
+    NSString, ns_string,
 };
 
 use crate::{
     consts,
     core::i18n::{Language, Text},
-    utils::{amber, button, icon, label, line, rect, rounded, symbol_button},
 };
+
+const STATUS_TAG: isize = 101;
+const STATUS_DOT_TAG: isize = 102;
 
 struct GlassState {
     language: Language,
@@ -292,10 +294,10 @@ pub fn populate(
     toggle.setButtonType(NSButtonType::PushOnPushOff);
     toggle.setState(login.state());
     let dot = label(&view, "●", rect(10.0, 1.0, 12.0, 16.0), 9.0);
-    dot.setTag(consts::STATUS_DOT_TAG);
+    dot.setTag(STATUS_DOT_TAG);
     dot.setHidden(!listening);
     let status = label(&view, "", rect(25.0, 0.0, 182.0, 17.0), 10.0);
-    status.setTag(consts::STATUS_TAG);
+    status.setTag(STATUS_TAG);
     if !listening {
         if let Some(item) = menu
             .itemArray()
@@ -343,14 +345,14 @@ pub fn sync_volume(window: &NSWindow, language: Language, volume: u8) {
             if label.tag() == consts::VOLUME_TAG {
                 label.setStringValue(&NSString::from_str(&format!("{volume}%")));
             }
-            if label.tag() == consts::STATUS_TAG {
+            if label.tag() == STATUS_TAG {
                 label.setStringValue(&NSString::from_str(language.text(if volume == 0 {
                     Text::SoundMuted
                 } else {
                     Text::SoundEnabled
                 })));
             }
-            if label.tag() == consts::STATUS_DOT_TAG {
+            if label.tag() == STATUS_DOT_TAG {
                 label.setTextColor(Some(&*if volume == 0 {
                     NSColor::colorWithWhite_alpha(1.0, 0.6)
                 } else {
@@ -444,4 +446,96 @@ pub fn about(
     popover.setContentSize(NSSize::new(180.0, height));
     popover.showRelativeToRect_ofView_preferredEdge(sender.bounds(), sender, NSRectEdge::MaxY);
     popover
+}
+
+fn rect(x: f64, y: f64, w: f64, h: f64) -> NSRect {
+    NSRect::new(NSPoint::new(x, y), NSSize::new(w, h))
+}
+
+fn amber(alpha: f64) -> Retained<NSColor> {
+    NSColor::colorWithSRGBRed_green_blue_alpha(1.0, 0.48, 0.06, alpha)
+}
+
+fn rounded(frame: NSRect, radius: f64, fill: &NSColor, stroke: &NSColor) {
+    let path = NSBezierPath::bezierPathWithRoundedRect_xRadius_yRadius(frame, radius, radius);
+    fill.setFill();
+    path.fill();
+    stroke.setStroke();
+    path.setLineWidth(1.0);
+    path.stroke();
+}
+
+fn line(x: f64, y: f64, width: f64) {
+    NSColor::colorWithWhite_alpha(1.0, 0.13).setStroke();
+    let path = NSBezierPath::bezierPath();
+    path.moveToPoint(NSPoint::new(x, y));
+    path.lineToPoint(NSPoint::new(x + width, y));
+    path.stroke();
+}
+
+fn label(view: &NSView, text: &str, frame: NSRect, size: f64) -> Retained<NSTextField> {
+    let label = NSTextField::labelWithString(&NSString::from_str(text), view.mtm());
+    label.setFrame(frame);
+    label.setFont(Some(&NSFont::systemFontOfSize(size)));
+    label.setTextColor(Some(&NSColor::colorWithWhite_alpha(1.0, 0.95)));
+    view.addSubview(&label);
+    label
+}
+
+fn symbol(name: &str) -> Retained<NSImage> {
+    let image = NSImage::imageWithSystemSymbolName_accessibilityDescription(
+        &NSString::from_str(name),
+        None,
+    )
+    .expect("system symbol on macOS 13");
+    image.setTemplate(true);
+    image
+}
+
+fn icon(view: &NSView, name: &str, frame: NSRect) {
+    let image = NSImageView::imageViewWithImage(&symbol(name), view.mtm());
+    image.setFrame(frame);
+    image.setContentTintColor(Some(&NSColor::whiteColor()));
+    image.setImageScaling(NSImageScaling::ScaleProportionallyUpOrDown);
+    view.addSubview(&image);
+}
+
+fn button(
+    view: &NSView,
+    title: &str,
+    frame: NSRect,
+    target: &AnyObject,
+    action: Sel,
+) -> Retained<NSButton> {
+    // SAFETY: The delegate stays alive and implements every supplied action.
+    let button = unsafe {
+        NSButton::buttonWithTitle_target_action(
+            &NSString::from_str(title),
+            Some(target),
+            Some(action),
+            view.mtm(),
+        )
+    };
+    button.setFrame(frame);
+    button.setBordered(false);
+    button.setFont(Some(&NSFont::systemFontOfSize(14.0)));
+    button.setContentTintColor(Some(&NSColor::whiteColor()));
+    view.addSubview(&button);
+    button
+}
+
+fn symbol_button(
+    view: &NSView,
+    name: &str,
+    title: &str,
+    frame: NSRect,
+    target: &AnyObject,
+    action: Sel,
+) -> Retained<NSButton> {
+    let button = button(view, "", frame, target, action);
+    button.setImage(Some(&symbol(name)));
+    button.setImagePosition(NSCellImagePosition::ImageOnly);
+    button.setAccessibilityLabel(Some(&NSString::from_str(title)));
+    button.setToolTip(Some(&NSString::from_str(title)));
+    button
 }
