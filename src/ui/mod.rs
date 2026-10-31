@@ -22,13 +22,18 @@ use objc2_foundation::{
 };
 
 use crate::{
-    audio::{Command, Controls, Worker},
-    catalog::{MouseProfile, Profile},
-    i18n::{Language, Text},
-    input::InputTap,
-    login, settings,
-    update::Updater,
+    consts,
+    core::{
+        audio::{Command, Controls, Worker},
+        catalog::{MouseProfile, Profile},
+        i18n::{Language, Text},
+        input::InputTap,
+        login,
+        update::Updater,
+    },
 };
+
+mod settings;
 
 struct State {
     window: RefCell<Option<Retained<NSWindow>>>,
@@ -66,7 +71,7 @@ define_class!(
             if let Some(button) = status.button(mtm) {
                 let image = NSImage::initWithData(
                     NSImage::alloc(),
-                    &NSData::with_bytes(include_bytes!("../assets/icons/tray-template.png")),
+                    &NSData::with_bytes(include_bytes!("../../assets/icons/tray-template.png")),
                 ).expect("embedded tray icon must decode");
                 image.setSize(NSSize::new(18.0, 18.0));
                 image.setTemplate(true);
@@ -195,7 +200,7 @@ define_class!(
 
         #[unsafe(method(openSocial:))]
         fn open_social(&self, sender: &NSButton) {
-            let link = if sender.tag() == 0 { settings::GITHUB_URL } else { settings::TELEGRAM_URL };
+            let link = if sender.tag() == 0 { consts::github_url() } else { consts::telegram_url() };
             if let Some(url) = NSURL::URLWithString(&NSString::from_str(link)) {
                 NSWorkspace::sharedWorkspace().openURL(&url);
             }
@@ -356,7 +361,7 @@ define_class!(
                         slider.setDoubleValue(volume);
                         unsafe { slider.sendAction_to(slider.action(), slider.target().as_deref()); }
                         assert_eq!(self.ivars().defaults.integerForKey(ns_string!("volume")), volume as isize);
-                        let percentage = root.subviews().iter().find_map(|view| view.downcast::<objc2_app_kit::NSTextField>().ok().filter(|label| label.tag() == settings::VOLUME_TAG)).unwrap();
+                        let percentage = root.subviews().iter().find_map(|view| view.downcast::<objc2_app_kit::NSTextField>().ok().filter(|label| label.tag() == consts::VOLUME_TAG)).unwrap();
                         assert_eq!(percentage.stringValue().to_string(), format!("{volume}%"));
                     }
                     for option in Language::ALL {
@@ -379,8 +384,8 @@ define_class!(
                     assert_eq!(links.len(), 2);
                     assert!(links.iter().all(|button| button.image().is_some()));
                     assert!(content.subviews().iter().filter_map(|view| view.downcast::<objc2_app_kit::NSTextField>().ok()).any(|label| label.stringValue().to_string().contains(env!("CARGO_PKG_VERSION"))));
-                    assert_eq!(settings::GITHUB_URL, "https://github.com/not-pro");
-                    assert_eq!(settings::TELEGRAM_URL, "https://nbautin.t.me");
+                    assert_eq!(consts::github_url(), "https://github.com/not-pro");
+                    assert_eq!(consts::telegram_url(), "https://nbautin.t.me");
                     assert_eq!(self.ivars().defaults.integerForKey(ns_string!("volume")), 25);
                     assert_eq!(Language::load(&self.ivars().defaults), language);
                     self.close_settings(sel!(closeSettings:), self);

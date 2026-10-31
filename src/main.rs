@@ -1,26 +1,18 @@
 #![deny(unsafe_op_in_unsafe_fn)]
 
-#[cfg(target_os = "macos")]
-mod audio;
-mod catalog;
-mod i18n;
-#[cfg(target_os = "macos")]
-mod input;
-#[cfg(target_os = "macos")]
-mod login;
-#[cfg(target_os = "macos")]
-mod settings;
+mod consts;
+mod core;
 #[cfg(target_os = "macos")]
 mod ui;
 #[cfg(target_os = "macos")]
-mod update;
+mod utils;
 
 #[cfg(not(target_os = "macos"))]
 compile_error!("Soundy currently supports macOS 13+ only");
 
 use std::{path::PathBuf, sync::Arc, time::Duration};
 
-use i18n::{Language, Text};
+use core::i18n::{Language, Text};
 
 fn main() {
     let language = Language::current();
@@ -65,19 +57,19 @@ fn main() {
         }
     }
     let result = if check {
-        audio::check(&root, language).map(|()| {
+        core::audio::check(&root, language).map(|()| {
             println!("OK: 240 WAV decoded, 40 keyboard profiles, 15 mouse pairs; no input monitoring started")
         })
     } else if preview || preview_mouse {
-        let controls = Arc::new(audio::Controls::default());
+        let controls = Arc::new(core::audio::Controls::default());
         controls
             .mouse_profile
             .store(1, std::sync::atomic::Ordering::Relaxed);
-        audio::Worker::start(&root, controls, language).map(|worker| {
+        core::audio::Worker::start(&root, controls, language).map(|worker| {
             let _ = worker.sender.send(if preview_mouse {
-                audio::Command::PreviewMouse
+                core::audio::Command::PreviewMouse
             } else {
-                audio::Command::Preview
+                core::audio::Command::Preview
             });
             std::thread::sleep(Duration::from_secs(1));
         })
