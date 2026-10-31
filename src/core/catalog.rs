@@ -89,17 +89,11 @@ impl Profile {
             .filter_map(move |(index, file)| file.starts_with(prefix).then_some(index))
     }
 
-    pub fn sample_index(self, keycode: u16, pressed: bool) -> Option<usize> {
+    pub fn sample_index(self, keycode: u16) -> Option<usize> {
         let prefix = KEYBOARDS[self.0 as usize].1;
         let group = files()
             .enumerate()
             .filter_map(move |(index, file)| file.strip_prefix(prefix).map(|role| (index, role)));
-        if !pressed {
-            return group
-                .clone()
-                .find(|(_, role)| *role == "_release.wav")
-                .map(|(i, _)| i);
-        }
         let special = match keycode {
             49 => "_space.wav",
             36 | 76 => "_enter.wav",
@@ -111,6 +105,8 @@ impl Profile {
         }
         // Soundy's routing for the additional groups is based on filename roles.
         // Only Tactile/Thocky/Topre modulo routing is confirmed in the RE notes.
+        // `_release.wav` (only t_bell ships one) is deliberately unused: key-up is
+        // not observed, so one key press is exactly one sound.
         let mut keys = group.filter(|(_, role)| role.starts_with("_key") || *role == ".wav");
         let count = keys.clone().count();
         (count > 0).then(|| keys.nth(usize::from(keycode) % count).unwrap().0)
@@ -130,12 +126,10 @@ impl MouseProfile {
     }
 
     pub fn sample_indices(self) -> impl Iterator<Item = usize> {
-        [self.sample_index(true), self.sample_index(false)]
-            .into_iter()
-            .flatten()
+        self.sample_index().into_iter()
     }
 
-    pub fn sample_index(self, pressed: bool) -> Option<usize> {
+    pub fn sample_index(self) -> Option<usize> {
         if self.0 == 0 {
             return None;
         }
@@ -144,9 +138,9 @@ impl MouseProfile {
         } else {
             self.0.to_string()
         };
-        // Soundy uses each pair as press/release for all mouse buttons.
-        // This is an explicit product rule, not a claim about KeyBell's routing.
-        let name = format!("mouse_{id}_{}.wav", if pressed { 1 } else { 2 });
+        // The pair packs two variants of one click; only the first is routed.
+        // KeyBell plays on mouse-down alone, so a click must stay one sound.
+        let name = format!("mouse_{id}_1.wav");
         files().position(|file| file == name)
     }
 }

@@ -12,7 +12,7 @@ fn running_engine_accepts_new_profile_formats_and_schedules_playback() {
             player
                 .select_profiles(&root, profile, mouse, Language::English, Instant::now())
                 .unwrap();
-            for index in [profile.sample_index(0, true), mouse.sample_index(true)]
+            for index in [profile.sample_index(0), mouse.sample_index()]
                 .into_iter()
                 .flatten()
             {

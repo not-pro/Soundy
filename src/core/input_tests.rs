@@ -21,69 +21,62 @@ fn modifier_events_distinguish_press_release_and_both_sides() {
         ] {
             assert_eq!(
                 key_pressed(CGEventType::FlagsChanged, keycode, flags(bits)),
-                Some(pressed)
+                pressed
             );
         }
     }
     for flags in [CGEventFlags::MaskAlphaShift, CGEventFlags::empty()] {
-        assert_eq!(
-            key_pressed(CGEventType::FlagsChanged, 57, flags),
-            Some(true)
-        );
+        assert!(key_pressed(CGEventType::FlagsChanged, 57, flags));
     }
-    assert_eq!(
-        key_pressed(CGEventType::FlagsChanged, 63, CGEventFlags::MaskSecondaryFn),
-        Some(true)
-    );
-    assert_eq!(
-        key_pressed(CGEventType::FlagsChanged, 63, CGEventFlags::empty()),
-        Some(false)
-    );
-    assert_eq!(
-        key_pressed(CGEventType::FlagsChanged, 0, CGEventFlags::empty()),
-        None
-    );
-    assert_eq!(
-        key_pressed(CGEventType::KeyDown, 0, CGEventFlags::empty()),
-        Some(true)
-    );
-    assert_eq!(
-        key_pressed(CGEventType::KeyUp, 0, CGEventFlags::empty()),
-        Some(false)
-    );
-    assert_eq!(
-        key_pressed(CGEventType::MouseMoved, 0, CGEventFlags::empty()),
-        None
-    );
+    assert!(key_pressed(
+        CGEventType::FlagsChanged,
+        63,
+        CGEventFlags::MaskSecondaryFn
+    ));
+    assert!(!key_pressed(
+        CGEventType::FlagsChanged,
+        63,
+        CGEventFlags::empty()
+    ));
+    assert!(!key_pressed(
+        CGEventType::FlagsChanged,
+        0,
+        CGEventFlags::empty()
+    ));
+    assert!(key_pressed(CGEventType::KeyDown, 0, CGEventFlags::empty()));
+    // Releases are not observed by the tap, so they never sound.
+    for kind in [
+        CGEventType::KeyUp,
+        CGEventType::MouseMoved,
+        CGEventType::TapDisabledByTimeout,
+    ] {
+        assert!(!key_pressed(kind, 0, CGEventFlags::empty()));
+    }
     for profile in crate::core::catalog::Profile::all() {
         for keycode in 54..=63 {
-            assert!(profile.sample_index(keycode, true).is_some());
+            assert!(profile.sample_index(keycode).is_some());
         }
     }
 }
 
 #[test]
-fn mouse_buttons_sound_on_press_and_release_only() {
+fn mouse_buttons_sound_on_press_only() {
     for kind in [
         CGEventType::LeftMouseDown,
         CGEventType::RightMouseDown,
         CGEventType::OtherMouseDown,
     ] {
-        assert_eq!(mouse_pressed(kind), Some(true));
+        assert!(mouse_clicked(kind));
     }
     for kind in [
         CGEventType::LeftMouseUp,
         CGEventType::RightMouseUp,
         CGEventType::OtherMouseUp,
-    ] {
-        assert_eq!(mouse_pressed(kind), Some(false));
-    }
-    for kind in [
         CGEventType::KeyDown,
         CGEventType::MouseMoved,
         CGEventType::ScrollWheel,
         CGEventType::LeftMouseDragged,
     ] {
-        assert_eq!(mouse_pressed(kind), None);
+        assert!(!mouse_clicked(kind));
     }
 }

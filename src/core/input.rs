@@ -41,16 +41,14 @@ impl InputTap {
                 CGEventTapLocation::SessionEventTap,
                 CGEventTapPlacement::TailAppendEventTap,
                 CGEventTapOptions::ListenOnly,
+                // Presses only: one physical action is one sound. Releases are not
+                // observed, so a click or a key press cannot play a second sound.
                 [
                     CGEventType::KeyDown,
-                    CGEventType::KeyUp,
                     CGEventType::FlagsChanged,
                     CGEventType::LeftMouseDown,
-                    CGEventType::LeftMouseUp,
                     CGEventType::RightMouseDown,
-                    CGEventType::RightMouseUp,
                     CGEventType::OtherMouseDown,
-                    CGEventType::OtherMouseUp,
                 ]
                 .into_iter()
                 .fold(0, |mask, kind| mask | (1 << kind.0)),
@@ -104,40 +102,34 @@ unsafe extern "C-unwind" fn callback(
                 CGEvent::tap_enable(unsafe { port.as_ref() }, true);
             }
         }
-    } else if matches!(
-        event_type,
-        CGEventType::KeyDown | CGEventType::KeyUp | CGEventType::FlagsChanged
-    ) {
+    } else if matches!(event_type, CGEventType::KeyDown | CGEventType::FlagsChanged) {
         let event_ref = Some(unsafe { event.as_ref() });
         if CGEvent::integer_value_field(event_ref, CGEventField::KeyboardEventAutorepeat) == 0 {
             let keycode =
                 CGEvent::integer_value_field(event_ref, CGEventField::KeyboardEventKeycode);
             if let Ok(keycode) = u16::try_from(keycode) {
-                if let Some(pressed) = key_pressed(event_type, keycode, CGEvent::flags(event_ref)) {
+                if key_pressed(event_type, keycode, CGEvent::flags(event_ref)) {
                     // A full queue drops a sound, never stalls keyboard input.
                     let _ = context.sender.try_send(Command::Key {
                         keycode,
-                        pressed,
                         at: Instant::now(),
                     });
                 }
             }
         }
-    } else if let Some(pressed) = mouse_pressed(event_type) {
-        let _ = context.sender.try_send(Command::Mouse {
-            pressed,
-            at: Instant::now(),
-        });
+    } else if mouse_clicked(event_type) {
+        let _ = context
+            .sender
+            .try_send(Command::Mouse { at: Instant::now() });
     }
     event.as_ptr()
 }
 
-fn key_pressed(kind: CGEventType, keycode: u16, flags: CGEventFlags) -> Option<bool> {
+fn key_pressed(kind: CGEventType, keycode: u16, flags: CGEventFlags) -> bool {
     match kind {
-        CGEventType::KeyDown => Some(true),
-        CGEventType::KeyUp => Some(false),
+        CGEventType::KeyDown => true,
         // Caps Lock reports a toggle, not a physical release. Sound on either toggle.
-        CGEventType::FlagsChanged if keycode == 57 => Some(true),
+        CGEventType::FlagsChanged if keycode == 57 => true,
         CGEventType::FlagsChanged => {
             // Device-specific masks from IOKit/hidsystem/IOLLEvent.h distinguish
             // left/right modifiers even while the opposite key is still held.
@@ -151,24 +143,19 @@ fn key_pressed(kind: CGEventType, keycode: u16, flags: CGEventFlags) -> Option<b
                 61 => 0x40,       // Right Option
                 62 => 0x2000,     // Right Control
                 63 => 0x00800000, // Fn
-                _ => return None,
+                _ => return false,
             };
-            Some(flags.bits() & mask != 0)
+            flags.bits() & mask != 0
         }
-        _ => None,
+        _ => false,
     }
 }
 
-fn mouse_pressed(kind: CGEventType) -> Option<bool> {
-    match kind {
-        CGEventType::LeftMouseDown | CGEventType::RightMouseDown | CGEventType::OtherMouseDown => {
-            Some(true)
-        }
-        CGEventType::LeftMouseUp | CGEventType::RightMouseUp | CGEventType::OtherMouseUp => {
-            Some(false)
-        }
-        _ => None,
-    }
+fn mouse_clicked(kind: CGEventType) -> bool {
+    matches!(
+        kind,
+        CGEventType::LeftMouseDown | CGEventType::RightMouseDown | CGEventType::OtherMouseDown
+    )
 }
 
 #[cfg(test)]

@@ -1,7 +1,9 @@
 use std::{
     cell::{Cell, OnceCell, RefCell},
-    path::Path,
-    sync::{Arc, atomic::Ordering},
+    fs::File,
+    os::fd::AsRawFd,
+    path::{Path, PathBuf},
+    sync::{Arc, OnceLock, atomic::Ordering},
 };
 
 use objc2::{
@@ -752,6 +754,12 @@ impl Delegate {
 }
 
 pub fn run(root: &Path, smoke_test: bool, language: Language) -> Result<(), String> {
+    // Two copies (the login item plus a freshly built one, say) would each install a
+    // tap and play every sound twice. One tap per user is the rule; smoke tests run
+    // their own short-lived instance and skip the guard.
+    if !smoke_test && !claim_single_instance() {
+        return Ok(());
+    }
     let mtm = MainThreadMarker::new().ok_or(language.text(Text::MainThreadRequired))?;
     let app = NSApplication::sharedApplication(mtm);
     app.setActivationPolicy(NSApplicationActivationPolicy::Accessory);
@@ -766,6 +774,53 @@ pub fn run(root: &Path, smoke_test: bool, language: Language) -> Result<(), Stri
     Ok(())
 }
 
+// Holds the lock for the whole process; the kernel releases it on exit.
+static INSTANCE: OnceLock<File> = OnceLock::new();
+
+const LOCK_EX: std::ffi::c_int = 2;
+const LOCK_NB: std::ffi::c_int = 4;
+
+// SAFETY: `flock` is a libc syscall wrapper with no preconditions beyond a live fd.
+unsafe extern "C" {
+    fn flock(fd: std::os::fd::RawFd, operation: std::ffi::c_int) -> std::ffi::c_int;
+}
+
+fn instance_lock_path() -> Option<PathBuf> {
+    let preferred = std::env::var_os("HOME")
+        .map(PathBuf::from)
+        .map(|home| home.join("Library/Application Support/Soundy"))
+        .unwrap_or_else(std::env::temp_dir);
+    if std::fs::create_dir_all(&preferred).is_ok() {
+        return Some(preferred.join("instance.lock"));
+    }
+    // A read-only or sandboxed home still gets a per-user lock; duplicates are the
+    // thing being prevented, not the file's address.
+    let fallback = std::env::temp_dir().join("Soundy");
+    std::fs::create_dir_all(&fallback).ok()?;
+    Some(fallback.join("instance.lock"))
+}
+
+fn try_lock(path: &Path) -> Option<File> {
+    let file = File::create(path).ok()?;
+    // SAFETY: `flock` only reads this valid descriptor. LOCK_EX | LOCK_NB asks for
+    // an exclusive lock without blocking, so a second copy learns it lost at once.
+    (unsafe { flock(file.as_raw_fd(), LOCK_EX | LOCK_NB) } == 0).then_some(file)
+}
+
+/// False when another copy already holds the lock; setup failures never block startup.
+fn claim_single_instance() -> bool {
+    let Some(path) = instance_lock_path() else {
+        return true;
+    };
+    match try_lock(&path) {
+        Some(file) => {
+            let _ = INSTANCE.set(file);
+            true
+        }
+        None => false,
+    }
+}
+
 pub fn show_error(error: &str, language: Language) {
     if let Some(mtm) = MainThreadMarker::new() {
         let alert = NSAlert::new(mtm);
@@ -778,4 +833,23 @@ pub fn show_error(error: &str, language: Language) {
 
 fn smoke_defaults_name() -> Retained<NSString> {
     NSString::from_str(&format!("dev.soundy.smoke.{}", std::process::id()))
+}
+
+#[cfg(test)]
+mod instance_tests {
+    use super::*;
+
+    #[test]
+    fn a_second_copy_cannot_take_the_lock() {
+        let dir = std::env::temp_dir().join(format!("soundy-lock-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("instance.lock");
+        let first = try_lock(&path).unwrap();
+        // Two opens in one process still conflict: flock locks the open file
+        // description, not the process.
+        assert!(try_lock(&path).is_none());
+        drop(first);
+        assert!(try_lock(&path).is_some());
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
 }

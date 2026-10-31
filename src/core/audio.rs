@@ -42,15 +42,8 @@ impl Default for Controls {
 }
 
 pub enum Command {
-    Key {
-        keycode: u16,
-        pressed: bool,
-        at: Instant,
-    },
-    Mouse {
-        pressed: bool,
-        at: Instant,
-    },
+    Key { keycode: u16, at: Instant },
+    Mouse { at: Instant },
     Preview,
     PreviewMouse,
     ProfilesChanged,
@@ -105,20 +98,18 @@ impl Worker {
                                 next_cleanup = now + CACHE_SWEEP_INTERVAL;
                             }
                             let index = match command {
-                                Some(Command::Key {
-                                    keycode,
-                                    pressed,
-                                    at,
-                                }) if at.elapsed() < Duration::from_millis(100) => {
-                                    profile.sample_index(keycode, pressed)
-                                }
-                                Some(Command::Mouse { pressed, at })
+                                Some(Command::Key { keycode, at })
                                     if at.elapsed() < Duration::from_millis(100) =>
                                 {
-                                    mouse.sample_index(pressed)
+                                    profile.sample_index(keycode)
                                 }
-                                Some(Command::Preview) => profile.sample_index(0, true),
-                                Some(Command::PreviewMouse) => mouse.sample_index(true),
+                                Some(Command::Mouse { at })
+                                    if at.elapsed() < Duration::from_millis(100) =>
+                                {
+                                    mouse.sample_index()
+                                }
+                                Some(Command::Preview) => profile.sample_index(0),
+                                Some(Command::PreviewMouse) => mouse.sample_index(),
                                 _ => None,
                             };
                             if let Some(index) = index {

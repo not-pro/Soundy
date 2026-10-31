@@ -27,21 +27,28 @@ fn catalog_covers_every_packaged_sound_and_preserves_routes() {
     let mut used = HashSet::new();
     for profile in Profile::all() {
         for keycode in 0..128 {
-            for pressed in [false, true] {
-                if let Some(index) = profile.sample_index(keycode, pressed) {
-                    used.insert(index);
-                }
-            }
-        }
-    }
-    for profile in MouseProfile::all() {
-        for pressed in [false, true] {
-            if let Some(index) = profile.sample_index(pressed) {
+            if let Some(index) = profile.sample_index(keycode) {
                 used.insert(index);
             }
         }
     }
-    assert_eq!(used.len(), 240, "every WAV must be reachable");
+    for profile in MouseProfile::all() {
+        if let Some(index) = profile.sample_index() {
+            used.insert(index);
+        }
+    }
+    // Key-up and mouse-up are not observed, so the release sample and the second
+    // mouse variant of every pair are packaged but never routed.
+    let unreachable = |name: &str| {
+        name == "t_bell_release.wav" || (name.starts_with("mouse_") && name.ends_with("_2.wav"))
+    };
+    for (index, name) in names.iter().enumerate() {
+        assert_eq!(
+            used.contains(&index),
+            !unreachable(name),
+            "{name} routing changed"
+        );
+    }
     for profile in [Profile(0), Profile(1), Profile(2)] {
         let prefix = KEYBOARDS[profile.0 as usize].1;
         for (keycode, role) in [
@@ -52,24 +59,19 @@ fn catalog_covers_every_packaged_sound_and_preserves_routes() {
             (8, "key1"),
         ] {
             assert_eq!(
-                names[profile.sample_index(keycode, true).unwrap()],
+                names[profile.sample_index(keycode).unwrap()],
                 format!("{prefix}_{role}.wav")
             );
         }
-        assert_eq!(profile.sample_index(0, false), None);
     }
-    assert_eq!(MouseProfile(0).sample_index(true), None);
+    assert_eq!(MouseProfile(0).sample_index(), None);
     assert_eq!(
-        names[MouseProfile(1).sample_index(true).unwrap()],
+        names[MouseProfile(1).sample_index().unwrap()],
         "mouse_1_1.wav"
     );
     assert_eq!(
-        names[MouseProfile(1).sample_index(false).unwrap()],
-        "mouse_1_2.wav"
-    );
-    assert_eq!(
-        names[MouseProfile(15).sample_index(false).unwrap()],
-        "mouse_c_2.wav"
+        names[MouseProfile(15).sample_index().unwrap()],
+        "mouse_c_1.wav"
     );
     assert_eq!(Profile::from_index(255), Profile(0));
     assert_eq!(MouseProfile::from_index(255), MouseProfile(0));
