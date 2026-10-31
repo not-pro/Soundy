@@ -220,8 +220,8 @@
     "zh-Hans": "未知参数"
   },
   "Help": {
-    "en": "Soundy — keyboard and mouse sounds for macOS\n\n  --sounds-dir PATH  Custom WAV directory (bundled sounds by default)\n  --check            Validate 240 WAV files without audio or input monitoring\n  --preview          Play one keyboard sound and exit\n  --preview-mouse    Play one mouse click and exit\n  --version          Version\n",
-    "ru": "Soundy — звуки клавиатуры и мыши для macOS\n\n  --sounds-dir PATH  Свой каталог WAV (по умолчанию встроенные звуки)\n  --check            Проверить 240 WAV без звука и мониторинга ввода\n  --preview          Воспроизвести один звук и завершить работу\n  --preview-mouse    Воспроизвести клик мыши и завершить работу\n  --version          Версия\n",
-    "zh-Hans": "Soundy — macOS 键盘和鼠标音效\n\n  --sounds-dir PATH  自定义 WAV 目录（默认使用内置音效）\n  --check            检查 240 个 WAV 文件，不播放声音或监控输入\n  --preview          播放一个键盘音效后退出\n  --preview-mouse    播放一次鼠标点击音效后退出\n  --version          版本\n"
+    "en": "Soundy — keyboard and mouse sounds for macOS and Windows\n\n  --sounds-dir PATH  Custom WAV directory (bundled sounds by default)\n  --check            Validate 240 WAV files without audio or input monitoring\n  --preview          Play one keyboard sound and exit\n  --preview-mouse    Play one mouse click and exit\n  --version          Version\n",
+    "ru": "Soundy — звуки клавиатуры и мыши для macOS и Windows\n\n  --sounds-dir PATH  Свой каталог WAV (по умолчанию встроенные звуки)\n  --check            Проверить 240 WAV без звука и мониторинга ввода\n  --preview          Воспроизвести один звук и завершить работу\n  --preview-mouse    Воспроизвести клик мыши и завершить работу\n  --version          Версия\n",
+    "zh-Hans": "Soundy — macOS 和 Windows 键盘和鼠标音效\n\n  --sounds-dir PATH  自定义 WAV 目录（默认使用内置音效）\n  --check            检查 240 个 WAV 文件，不播放声音或监控输入\n  --preview          播放一个键盘音效后退出\n  --preview-mouse    播放一次鼠标点击音效后退出\n  --version          版本\n"
   }
 }

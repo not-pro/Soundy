@@ -1,12 +1,18 @@
 #![deny(unsafe_op_in_unsafe_fn)]
+// Release builds are a tray app, so Windows must not attach a console window.
+// Debug builds keep it so `cargo run` and the `--check` output stay visible.
+#![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
 mod consts;
 mod core;
 #[cfg(target_os = "macos")]
 mod ui;
+#[cfg(windows)]
+#[path = "ui_windows.rs"]
+mod ui;
 
-#[cfg(not(target_os = "macos"))]
-compile_error!("Soundy currently supports macOS 13+ only");
+#[cfg(not(any(target_os = "macos", windows)))]
+compile_error!("Soundy supports macOS 13+ and Windows 10+ only");
 
 use std::{path::PathBuf, sync::Arc, time::Duration};
 
@@ -14,10 +20,7 @@ use core::i18n::{Language, Text};
 
 fn main() {
     let language = Language::current();
-    let mut root = std::env::current_exe()
-        .ok()
-        .and_then(|exe| exe.parent().map(|dir| dir.join("../Resources/Sounds")))
-        .filter(|dir| dir.is_dir())
+    let mut root = default_sounds_dir()
         .unwrap_or_else(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("assets/sounds"));
     let mut check = false;
     let mut preview = false;
@@ -56,7 +59,7 @@ fn main() {
     }
     let result = if check {
         core::audio::check(&root, language).map(|()| {
-            println!("OK: 240 WAV decoded, 40 keyboard profiles, 15 mouse pairs; no input monitoring started")
+            println!("OK: 240 WAV decoded, 40 keyboard profiles, 15 mouse pairs; no audio or input started")
         })
     } else if preview || preview_mouse {
         let controls = Arc::new(core::audio::Controls::default());
@@ -81,4 +84,14 @@ fn main() {
         }
         std::process::exit(1);
     }
+}
+
+/// macOS keeps sounds in `Soundy.app/Contents/Resources/Sounds`; Windows ships a
+/// `Sounds` folder next to the executable. The manifest path only helps `cargo run`.
+fn default_sounds_dir() -> Option<PathBuf> {
+    let exe = std::env::current_exe().ok()?;
+    let dir = exe.parent()?;
+    [dir.join("Sounds"), dir.join("../Resources/Sounds")]
+        .into_iter()
+        .find(|candidate| candidate.is_dir())
 }

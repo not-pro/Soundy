@@ -1,5 +1,6 @@
 use std::{collections::HashMap, sync::LazyLock};
 
+#[cfg(target_os = "macos")]
 pub const VOLUME_TAG: isize = 100;
 
 // Social links live in assets/config.json so they can change without rebuilding logic.

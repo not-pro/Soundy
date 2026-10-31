@@ -1,5 +1,6 @@
 use std::{collections::HashMap, sync::LazyLock};
 
+#[cfg(target_os = "macos")]
 use objc2_foundation::{NSLocale, NSString, NSUserDefaults, ns_string};
 
 // Translations live in assets/i18n.json; this enum only names the message keys.
@@ -10,6 +11,7 @@ static MESSAGES: LazyLock<HashMap<String, HashMap<String, String>>> = LazyLock::
 macro_rules! text_keys {
     ($($key:ident),* $(,)?) => {
         #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+        #[allow(dead_code)] // Every key ships in both builds; each platform uses a subset.
         pub enum Text { $($key),* }
 
         impl Text {
@@ -64,6 +66,7 @@ impl Language {
         }
     }
 
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))] // macOS locale lookup and tests
     pub fn resolve(saved: Option<&str>, preferred: impl IntoIterator<Item = String>) -> Self {
         saved
             .and_then(Self::from_code)
@@ -75,10 +78,17 @@ impl Language {
             .unwrap_or(Self::English)
     }
 
+    #[cfg(target_os = "macos")]
     pub fn current() -> Self {
         Self::load(&NSUserDefaults::standardUserDefaults())
     }
 
+    #[cfg(windows)]
+    pub fn current() -> Self {
+        crate::core::settings::Config::load().language
+    }
+
+    #[cfg(target_os = "macos")]
     pub fn load(defaults: &NSUserDefaults) -> Self {
         let saved = defaults
             .stringForKey(ns_string!("language"))
@@ -89,6 +99,7 @@ impl Language {
         )
     }
 
+    #[cfg(target_os = "macos")]
     pub fn save(self, defaults: &NSUserDefaults) {
         let code = NSString::from_str(self.code());
         // SAFETY: NSUserDefaults copies this immutable NSString property-list value.

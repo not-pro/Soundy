@@ -1,9 +1,9 @@
 [package]
 name = "soundy"
-version = "1.8.6"
+version = "1.9.0"
 edition = "2024"
 rust-version = "1.85"
-description = "Keyboard and mouse sounds for macOS"
+description = "Keyboard and mouse sounds for macOS and Windows"
 
 [dependencies]
 serde_json = "1"
@@ -16,6 +16,20 @@ objc2-avf-audio = { version = "0.3.2", default-features = false, features = ["st
 objc2-core-graphics = { version = "0.3.2", default-features = false, features = ["std", "CGEvent", "CGEventTypes"] }
 objc2-core-foundation = { version = "0.3.2", default-features = false, features = ["std", "CFMachPort", "CFRunLoop"] }
 objc2-audio-toolbox = { version = "0.3.2", default-features = false, features = ["std", "AudioComponent"] }
+
+[target.'cfg(windows)'.dependencies]
+rodio = { version = "0.23.0", default-features = false, features = ["playback", "wav"] }
+windows = { version = "0.62.2", features = [
+    "Win32_Foundation",
+    "Win32_Globalization",
+    "Win32_Graphics_Gdi",
+    "Win32_System_LibraryLoader",
+    "Win32_System_Registry",
+    "Win32_System_Threading",
+    "Win32_UI_Input_KeyboardAndMouse",
+    "Win32_UI_Shell",
+    "Win32_UI_WindowsAndMessaging",
+] }
 
 [profile.release]
 lto = "thin"

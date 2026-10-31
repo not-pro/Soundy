@@ -82,6 +82,7 @@ impl Profile {
         }
     }
 
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))] // macOS prefetch cache
     pub fn sample_indices(self) -> impl Iterator<Item = usize> {
         let prefix = KEYBOARDS[self.0 as usize].1;
         files()
@@ -125,6 +126,7 @@ impl MouseProfile {
         Self(if index <= 15 { index as u8 } else { 0 })
     }
 
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))] // macOS prefetch cache
     pub fn sample_indices(self) -> impl Iterator<Item = usize> {
         self.sample_index().into_iter()
     }
