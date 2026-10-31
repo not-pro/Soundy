@@ -22,19 +22,11 @@ ditto "$sparkle/Sparkle.framework" "$bundle/Contents/Frameworks/Sparkle.framewor
 /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $bundle_version" "$bundle/Contents/Info.plist"
 /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $bundle_version" "$bundle/Contents/Info.plist"
 /usr/libexec/PlistBuddy -c "Set :SUFeedURL https://github.com/not-pro/Soundy/releases/latest/download/appcast-$(uname -m).xml" "$bundle/Contents/Info.plist"
-# Sign with a committed self-signed identity instead of ad-hoc ("-"). Ad-hoc signing
-# derives its designated requirement from the code hash, so every update looks like a
-# different app to macOS and drops both Input Monitoring approval and the login item.
-# A stable certificate keeps the designated requirement identical across updates.
-codesign_password=soundy
-keychain_dir=$(mktemp -d "${TMPDIR:-/tmp}/soundy-sign.XXXXXX")
-keychain="$keychain_dir/signing.keychain-db"
-cleanup() { security delete-keychain "$keychain" > /dev/null 2>&1 || true; }
-trap cleanup EXIT HUP INT TERM
-security create-keychain -p "" "$keychain"
-security unlock-keychain -p "" "$keychain"
-security import certificates/soundy-codesign.p12 -k "$keychain" -P "$codesign_password" -T /usr/bin/codesign
-security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "" "$keychain" > /dev/null
-codesign --keychain "$keychain" --force --sign "Soundy Code Signing" --identifier dev.soundy.app "$bundle"
+# Give the ad-hoc signature an explicit designated requirement. The default ad-hoc
+# requirement is derived from the code hash, so every release looks like a different
+# app and macOS drops both the Input Monitoring approval and the login item on update.
+# An identifier-based requirement is identical across builds, so the grants survive.
+codesign --force --sign - --identifier dev.soundy.app \
+    --requirements '=designated => identifier "dev.soundy.app"' "$bundle"
 codesign --verify --deep --strict "$bundle"
 printf 'Built %s/dist/Soundy.app\n' "$PWD"

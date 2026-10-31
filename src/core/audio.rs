@@ -176,11 +176,13 @@ struct VoicePool {
 }
 
 struct Player {
-    engine: Retained<AVAudioEngine>,
     samples: Vec<Option<Sample>>,
     pools: Vec<Option<VoicePool>>,
     profiles: Option<(Profile, MouseProfile)>,
     _limiter: Retained<AVAudioUnitEffect>,
+    // Declared last so the engine outlives the nodes, buffers and effect it owns.
+    // Dropping it first tears the audio graph down underneath them and crashes.
+    engine: Retained<AVAudioEngine>,
 }
 
 impl Player {
