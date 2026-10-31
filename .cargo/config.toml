@@ -1,2 +1,4 @@
-[env]
-MACOSX_DEPLOYMENT_TARGET = "13.0"
+# Ship a self-contained Soundy.exe: a dynamic CRT would make Windows ask for
+# VCRUNTIME140.dll (VC++ redistributable) before the tray icon ever appears.
+[target.'cfg(target_env = "msvc")']
+rustflags = ["-C", "target-feature=+crt-static"]
