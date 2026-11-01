@@ -497,6 +497,9 @@ define_class!(
         fn select_profile(&self, sender: &NSMenuItem) {
             let profile = Profile::from_index(sender.tag().max(0) as usize);
             self.ivars().controls.profile.store(profile.0, Ordering::Relaxed);
+            self.ivars()
+                .global
+                .set((profile.0, self.ivars().global.get().1));
             self.ivars().defaults.setInteger_forKey(isize::from(profile.0), ns_string!("profile"));
             self.play_preview();
             self.refresh();
@@ -506,6 +509,9 @@ define_class!(
         fn select_mouse(&self, sender: &NSMenuItem) {
             let profile = MouseProfile::from_index(sender.tag().max(0) as usize);
             self.ivars().controls.mouse_profile.store(profile.0, Ordering::Relaxed);
+            self.ivars()
+                .global
+                .set((self.ivars().global.get().0, profile.0));
             self.ivars().defaults.setInteger_forKey(isize::from(profile.0), ns_string!("mouseProfile"));
             self.play_mouse_preview();
             self.refresh();
