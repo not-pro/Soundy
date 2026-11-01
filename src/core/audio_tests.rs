@@ -12,11 +12,22 @@ fn running_engine_accepts_new_profile_formats_and_schedules_playback() {
             player
                 .select_profiles(&root, profile, mouse, Language::English, Instant::now())
                 .unwrap();
-            for index in [profile.sample_index(0), mouse.sample_index()]
+            for index in [profile.sample_index(0), mouse.sample_index(false)]
                 .into_iter()
                 .flatten()
             {
                 player.play(index, 1);
+                let sample = player.samples[index].as_ref().unwrap();
+                assert!(sample.last_play.is_some());
+                assert!(sample.last_variant.is_some(), "every press picks a variant");
+            }
+            // Key-up only sounds for a profile that ships a release sample.
+            for index in profile
+                .release_index()
+                .into_iter()
+                .chain(mouse.sample_indices())
+            {
+                player.play(index, 25);
                 assert!(player.samples[index].as_ref().unwrap().last_play.is_some());
             }
         }

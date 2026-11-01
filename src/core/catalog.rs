@@ -106,11 +106,17 @@ impl Profile {
         }
         // Soundy's routing for the additional groups is based on filename roles.
         // Only Tactile/Thocky/Topre modulo routing is confirmed in the RE notes.
-        // `_release.wav` (only t_bell ships one) is deliberately unused: key-up is
-        // not observed, so one key press is exactly one sound.
         let mut keys = group.filter(|(_, role)| role.starts_with("_key") || *role == ".wav");
         let count = keys.clone().count();
         (count > 0).then(|| keys.nth(usize::from(keycode) % count).unwrap().0)
+    }
+
+    /// Only one profile ships a release sample (`t_bell_release.wav`), so only
+    /// that profile answers a key-up. The reference build's use of this file is
+    /// not proven in the RE notes; it is the only reading of the bundled asset.
+    pub fn release_index(self) -> Option<usize> {
+        let prefix = KEYBOARDS[self.0 as usize].1;
+        files().position(|file| file == format!("{prefix}_release.wav"))
     }
 }
 
@@ -128,10 +134,16 @@ impl MouseProfile {
 
     #[cfg_attr(not(target_os = "macos"), allow(dead_code))] // macOS prefetch cache
     pub fn sample_indices(self) -> impl Iterator<Item = usize> {
-        self.sample_index().into_iter()
+        self.sample_index(false)
+            .into_iter()
+            .chain(self.sample_index(true))
     }
 
-    pub fn sample_index(self) -> Option<usize> {
+    /// Each mouse profile ships a pair of clicks. KeyBell watches left
+    /// (`type == 1`) and right (`type == 3`) mouse-down as separate branches and
+    /// stores a different file for each, so left and the extra buttons use `_1`
+    /// and the right button uses `_2`.
+    pub fn sample_index(self, right: bool) -> Option<usize> {
         if self.0 == 0 {
             return None;
         }
@@ -140,9 +152,7 @@ impl MouseProfile {
         } else {
             self.0.to_string()
         };
-        // The pair packs two variants of one click; only the first is routed.
-        // KeyBell plays on mouse-down alone, so a click must stay one sound.
-        let name = format!("mouse_{id}_1.wav");
+        let name = format!("mouse_{id}_{}.wav", if right { 2 } else { 1 });
         files().position(|file| file == name)
     }
 }

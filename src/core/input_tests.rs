@@ -44,7 +44,6 @@ fn modifier_events_distinguish_press_release_and_both_sides() {
         CGEventFlags::empty()
     ));
     assert!(key_pressed(CGEventType::KeyDown, 0, CGEventFlags::empty()));
-    // Releases are not observed by the tap, so they never sound.
     for kind in [
         CGEventType::KeyUp,
         CGEventType::MouseMoved,
@@ -61,13 +60,9 @@ fn modifier_events_distinguish_press_release_and_both_sides() {
 
 #[test]
 fn mouse_buttons_sound_on_press_only() {
-    for kind in [
-        CGEventType::LeftMouseDown,
-        CGEventType::RightMouseDown,
-        CGEventType::OtherMouseDown,
-    ] {
-        assert!(mouse_clicked(kind));
-    }
+    assert_eq!(mouse_clicked(CGEventType::LeftMouseDown), Some(false));
+    assert_eq!(mouse_clicked(CGEventType::OtherMouseDown), Some(false));
+    assert_eq!(mouse_clicked(CGEventType::RightMouseDown), Some(true));
     for kind in [
         CGEventType::LeftMouseUp,
         CGEventType::RightMouseUp,
@@ -77,6 +72,6 @@ fn mouse_buttons_sound_on_press_only() {
         CGEventType::ScrollWheel,
         CGEventType::LeftMouseDragged,
     ] {
-        assert!(!mouse_clicked(kind));
+        assert_eq!(mouse_clicked(kind), None);
     }
 }

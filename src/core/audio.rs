@@ -23,6 +23,7 @@ use objc2_foundation::{NSString, NSURL};
 use crate::core::{
     catalog::{self, MouseProfile, Profile},
     i18n::{Language, Text},
+    variation,
 };
 
 pub struct Controls {
@@ -43,7 +44,8 @@ impl Default for Controls {
 
 pub enum Command {
     Key { keycode: u16, at: Instant },
-    Mouse { at: Instant },
+    KeyUp { at: Instant },
+    Mouse { right: bool, at: Instant },
     Preview,
     PreviewMouse,
     ProfilesChanged,
@@ -103,13 +105,18 @@ impl Worker {
                                 {
                                     profile.sample_index(keycode)
                                 }
-                                Some(Command::Mouse { at })
+                                Some(Command::KeyUp { at })
                                     if at.elapsed() < Duration::from_millis(100) =>
                                 {
-                                    mouse.sample_index()
+                                    profile.release_index()
+                                }
+                                Some(Command::Mouse { right, at })
+                                    if at.elapsed() < Duration::from_millis(100) =>
+                                {
+                                    mouse.sample_index(right)
                                 }
                                 Some(Command::Preview) => profile.sample_index(0),
-                                Some(Command::PreviewMouse) => mouse.sample_index(),
+                                Some(Command::PreviewMouse) => mouse.sample_index(false),
                                 _ => None,
                             };
                             if let Some(index) = index {
@@ -151,6 +158,8 @@ const CACHE_SWEEP_INTERVAL: Duration = Duration::from_secs(1);
 struct Voice {
     node: Retained<AVAudioPlayerNode>,
     busy_until: Instant,
+    // Keeps the pitched variant alive for as long as this voice may still play it.
+    buffer: Option<Retained<AVAudioPCMBuffer>>,
 }
 
 struct Sample {
@@ -158,6 +167,7 @@ struct Sample {
     duration: Duration,
     pool: usize,
     last_play: Option<Instant>,
+    last_variant: Option<u8>,
     expires_at: Option<Instant>,
 }
 
@@ -170,6 +180,7 @@ struct Player {
     samples: Vec<Option<Sample>>,
     pools: Vec<Option<VoicePool>>,
     profiles: Option<(Profile, MouseProfile)>,
+    random: variation::Random,
     _limiter: Retained<AVAudioUnitEffect>,
     // Declared last so the engine outlives the nodes, buffers and effect it owns.
     // Dropping it first tears the audio graph down underneath them and crashes.
@@ -203,6 +214,7 @@ impl Player {
                     .collect(),
                 pools: Vec::new(),
                 profiles: None,
+                random: variation::Random::new(),
                 _limiter: limiter,
             }
         }
@@ -282,6 +294,7 @@ impl Player {
                             Voice {
                                 node,
                                 busy_until: now,
+                                buffer: None,
                             }
                         })
                         .collect()
@@ -301,6 +314,7 @@ impl Player {
             duration,
             pool,
             last_play: None,
+            last_variant: None,
             expires_at: None,
         })
     }
@@ -358,6 +372,17 @@ impl Player {
         {
             return;
         }
+        let variant = self
+            .random
+            .pick(sample.last_variant, variation::RATIOS.len() as u8);
+        sample.last_variant = Some(variant);
+        let ratio = variation::RATIOS[usize::from(variant)];
+        let level = self.random.level();
+        // SAFETY: the variant keeps the cached buffer's PCM format and is written on the
+        // audio thread before it is scheduled; ratio 1.0 reuses the cached buffer.
+        let pitched = (ratio != 1.0)
+            .then(|| unsafe { resample(&sample.buffer, ratio) })
+            .flatten();
         let voice = self.pools[sample.pool]
             .as_mut()
             .expect("cached sample voice pool")
@@ -365,6 +390,8 @@ impl Player {
             .iter_mut()
             .min_by_key(|voice| voice.busy_until)
             .expect("six preallocated voices");
+        voice.buffer = pitched;
+        let buffer = voice.buffer.as_deref().unwrap_or(&sample.buffer);
         unsafe {
             // Interrupt a stolen voice instead of appending to its queue.
             let options = if voice.busy_until > now {
@@ -372,9 +399,11 @@ impl Player {
             } else {
                 AVAudioPlayerNodeBufferOptions::empty()
             };
-            voice.node.setVolume(f32::from(volume.min(100)) / 100.0);
+            voice
+                .node
+                .setVolume((f32::from(volume.min(100)) / 100.0 * level).min(1.0));
             voice.node.scheduleBuffer_atTime_options_completionHandler(
-                &sample.buffer,
+                buffer,
                 None,
                 options,
                 std::ptr::null_mut(),
@@ -383,9 +412,61 @@ impl Player {
                 voice.node.play();
             }
         }
-        voice.busy_until = now + sample.duration;
+        voice.busy_until = now + sample.duration.div_f32(ratio);
         sample.last_play = Some(now);
     }
+}
+
+/// Rebuilds a cached sample at another pitch and length by resampling it, the
+/// way the reference loader does (0x10005ecd4); a press therefore varies by up
+/// to ±3% instead of replaying one identical waveform.
+///
+/// # Safety
+/// `buffer` must be a validated 32-bit float PCM buffer owned by this thread, and
+/// the result must be scheduled only on the same audio graph.
+unsafe fn resample(buffer: &AVAudioPCMBuffer, ratio: f32) -> Option<Retained<AVAudioPCMBuffer>> {
+    let frames = unsafe { buffer.frameLength() };
+    if frames == 0 {
+        return None;
+    }
+    // SAFETY: read_buffer only produces float PCM buffers from bundled WAV files.
+    let format = unsafe { buffer.format() };
+    let capacity = (f64::from(frames) / f64::from(ratio)).ceil() as u32;
+    // SAFETY: The format is PCM, so the initializer has a valid byte capacity.
+    let pitched = unsafe {
+        AVAudioPCMBuffer::initWithPCMFormat_frameCapacity(
+            AVAudioPCMBuffer::alloc(),
+            &format,
+            capacity,
+        )
+    }?;
+    // SAFETY: Both buffers are alive for this call and only this thread touches them.
+    let (source, target) = unsafe { (buffer.floatChannelData(), pitched.floatChannelData()) };
+    if source.is_null() || target.is_null() {
+        return None;
+    }
+    unsafe { pitched.setFrameLength(capacity) };
+    let (stride, target_stride) = unsafe { (buffer.stride(), pitched.stride()) };
+    let last = frames as usize - 1;
+    for channel in 0..unsafe { format.channelCount() } as usize {
+        // SAFETY: floatChannelData yields channelCount pointers, each to frameLength samples.
+        let source = unsafe { (*source.add(channel)).as_ptr() };
+        let target = unsafe { (*target.add(channel)).as_ptr() };
+        for frame in 0..capacity as usize {
+            let position = frame as f32 * ratio;
+            let first = (position as usize).min(last);
+            let fraction = position - first as f32;
+            // SAFETY: first <= last, and first + 1 is read only when it is in range.
+            let current = unsafe { *source.add(first * stride) };
+            let next = if first < last {
+                unsafe { *source.add((first + 1) * stride) }
+            } else {
+                current
+            };
+            unsafe { *target.add(frame * target_stride) = current + (next - current) * fraction };
+        }
+    }
+    Some(pitched)
 }
 
 impl Drop for Player {

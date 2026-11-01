@@ -19,3 +19,4 @@ pub mod login;
 pub mod settings;
 #[cfg(target_os = "macos")]
 pub mod update;
+pub mod variation;

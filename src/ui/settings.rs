@@ -1,7 +1,7 @@
 use objc2::{
     AnyThread, DefinedClass, MainThreadOnly, define_class, msg_send,
-    rc::{Allocated, Retained},
-    runtime::{AnyClass, AnyObject, Sel},
+    rc::Retained,
+    runtime::{AnyObject, Sel},
     sel,
 };
 use objc2_app_kit::*;
@@ -48,19 +48,19 @@ define_class!(
         fn content_tag(&self) -> isize { 200 }
         #[unsafe(method(drawRect:))]
         fn draw(&self, _dirty: NSRect) {
-            let white = NSColor::colorWithWhite_alpha(1.0, 0.22);
+            let ink = ink();
             for frame in [rect(8.0, 139.0, 224.0, 72.0), rect(8.0, 85.0, 224.0, 48.0), rect(8.0, 53.0, 224.0, 28.0), rect(8.0, 21.0, 224.0, 28.0)] {
-                rounded(frame, 8.0, &NSColor::colorWithWhite_alpha(1.0, 0.055), &white);
+                rounded(frame, 8.0, &ink(0.055), &ink(0.22));
             }
             line(9.0, 175.0, 222.0);
             line(8.0, 18.0, 224.0);
-            rounded(rect(86.0, 57.0, 138.0, 20.0), 5.0, &NSColor::colorWithWhite_alpha(1.0, 0.04), &white);
+            rounded(rect(86.0, 57.0, 138.0, 20.0), 5.0, &ink(0.04), &ink(0.22));
             let selected = match self.ivars().language { Language::Russian => 0.0, Language::English => 1.0, Language::Chinese => 2.0 };
             rounded(rect(86.0 + selected * 46.0, 57.0, 46.0, 20.0), 5.0, &amber(0.45), &amber(1.0));
-            rounded(rect(193.0, 27.0, 30.0, 17.0), 8.5, &*if self.ivars().login { amber(0.95) } else { NSColor::colorWithWhite_alpha(1.0, 0.18) }, &white);
+            rounded(rect(193.0, 27.0, 30.0, 17.0), 8.5, &*if self.ivars().login { amber(0.95) } else { ink(0.18) }, &ink(0.22));
             rounded(rect(if self.ivars().login { 208.0 } else { 195.0 }, 29.0, 13.0, 13.0), 6.5, &NSColor::whiteColor(), &NSColor::clearColor());
             for y in [183.0, 147.0] {
-                rounded(rect(207.0, y, 20.0, 20.0), 10.0, &NSColor::colorWithWhite_alpha(1.0, 0.035), &NSColor::colorWithWhite_alpha(1.0, 0.5));
+                rounded(rect(207.0, y, 20.0, 20.0), 10.0, &ink(0.035), &ink(0.5));
             }
         }
     }
@@ -75,13 +75,13 @@ define_class!(
         #[unsafe(method(drawBarInside:flipped:))]
         fn draw_bar(&self, frame: NSRect, _flipped: bool) {
             let bar = rect(frame.origin.x, frame.origin.y + (frame.size.height - 6.0) / 2.0, frame.size.width, 6.0);
-            rounded(bar, 3.0, &NSColor::colorWithWhite_alpha(1.0, 0.17), &NSColor::colorWithWhite_alpha(1.0, 0.3));
+            rounded(bar, 3.0, &ink()(0.17), &ink()(0.3));
             let fill = rect(bar.origin.x, bar.origin.y, bar.size.width * self.doubleValue() / 100.0, 6.0);
             if fill.size.width > 0.0 { rounded(fill, 3.0, &amber(1.0), &NSColor::colorWithSRGBRed_green_blue_alpha(1.0, 0.70, 0.28, 1.0)); }
         }
         #[unsafe(method(drawKnob:))]
         fn draw_knob(&self, frame: NSRect) {
-            rounded(frame, frame.size.width / 2.0, &NSColor::colorWithWhite_alpha(0.8, 0.65), &NSColor::whiteColor());
+            rounded(frame, frame.size.width / 2.0, &NSColor::whiteColor(), &ink()(0.45));
         }
     }
 );
@@ -135,27 +135,14 @@ pub fn populate(
         login: login.state() == 1,
     });
     let view: Retained<Glass> = unsafe { msg_send![super(view), initWithFrame: bounds] };
-    let glass: Retained<NSView> = if let Some(class) = AnyClass::get(c"NSGlassEffectView") {
-        // SAFETY: Available on macOS 26+. The SDK declares NSView inheritance,
-        // initWithFrame:, style (NSInteger), and the strong contentView property.
-        unsafe {
-            let allocated: Allocated<NSView> = msg_send![class, alloc];
-            let glass: Retained<NSView> = msg_send![allocated, initWithFrame: bounds];
-            let _: () = msg_send![&*glass, setStyle: 1_isize]; // NSGlassEffectViewStyleClear
-            let _: () = msg_send![&*glass, setContentView: &*view];
-            glass
-        }
-    } else {
-        let glass = NSVisualEffectView::initWithFrame(NSVisualEffectView::alloc(mtm), bounds);
-        glass.setMaterial(NSVisualEffectMaterial::HUDWindow);
-        glass.setBlendingMode(NSVisualEffectBlendingMode::BehindWindow);
-        glass.setState(NSVisualEffectState::Active);
-        glass.addSubview(&view);
-        Retained::into_super(glass)
-    };
-    glass.setAppearance(
-        NSAppearance::appearanceNamed(unsafe { NSAppearanceNameDarkAqua }).as_deref(),
-    );
+    // System vibrancy instead of the Liquid Glass view: it follows the light or dark
+    // appearance and costs a fraction of the memory the glass effect keeps resident.
+    let glass = NSVisualEffectView::initWithFrame(NSVisualEffectView::alloc(mtm), bounds);
+    glass.setMaterial(NSVisualEffectMaterial::Popover);
+    glass.setBlendingMode(NSVisualEffectBlendingMode::BehindWindow);
+    glass.setState(NSVisualEffectState::Active);
+    glass.addSubview(&view);
+    let glass: Retained<NSView> = Retained::into_super(glass);
     symbol_button(
         &view,
         "xmark",
@@ -199,7 +186,7 @@ pub fn populate(
         }
         icon(&view, "chevron.down", rect(188.0, y + 13.0, 8.0, 8.0));
         popup.setFont(Some(&NSFont::systemFontOfSize(12.0)));
-        popup.setContentTintColor(Some(&NSColor::whiteColor()));
+        popup.setContentTintColor(Some(&NSColor::labelColor()));
         popup.setTag(group);
         popup.setAccessibilityLabel(Some(&NSString::from_str(language.text(text))));
         unsafe {
@@ -354,7 +341,7 @@ pub fn sync_volume(window: &NSWindow, language: Language, volume: u8) {
             }
             if label.tag() == STATUS_DOT_TAG {
                 label.setTextColor(Some(&*if volume == 0 {
-                    NSColor::colorWithWhite_alpha(1.0, 0.6)
+                    NSColor::secondaryLabelColor()
                 } else {
                     NSColor::colorWithSRGBRed_green_blue_alpha(0.45, 0.88, 0.38, 1.0)
                 }));
@@ -437,9 +424,6 @@ pub fn about(
     let controller = NSViewController::new(mtm);
     controller.setView(&view);
     let popover = NSPopover::new(mtm);
-    popover.setAppearance(
-        NSAppearance::appearanceNamed(unsafe { NSAppearanceNameDarkAqua }).as_deref(),
-    );
     popover.setBehavior(NSPopoverBehavior::Transient);
     popover.setAnimates(false);
     popover.setContentViewController(Some(&controller));
@@ -452,8 +436,31 @@ fn rect(x: f64, y: f64, w: f64, h: f64) -> NSRect {
     NSRect::new(NSPoint::new(x, y), NSSize::new(w, h))
 }
 
+/// White ink on the dark appearance, black ink on the light one.
+fn ink() -> impl Fn(f64) -> Retained<NSColor> {
+    let white = !dark();
+    move |alpha: f64| NSColor::colorWithWhite_alpha(if white { 1.0 } else { 0.0 }, alpha)
+}
+
+fn dark() -> bool {
+    match MainThreadMarker::new() {
+        Some(mtm) => NSApplication::sharedApplication(mtm)
+            .effectiveAppearance()
+            .name()
+            .to_string()
+            .contains("Dark"),
+        // Before the app finishes launching there is nothing to match; dark reads
+        // correctly on either appearance because the panels are translucent.
+        None => true,
+    }
+}
+
 fn amber(alpha: f64) -> Retained<NSColor> {
-    NSColor::colorWithSRGBRed_green_blue_alpha(1.0, 0.48, 0.06, alpha)
+    if dark() {
+        NSColor::colorWithSRGBRed_green_blue_alpha(1.0, 0.48, 0.06, alpha)
+    } else {
+        NSColor::colorWithSRGBRed_green_blue_alpha(0.85, 0.34, 0.0, alpha)
+    }
 }
 
 fn rounded(frame: NSRect, radius: f64, fill: &NSColor, stroke: &NSColor) {
@@ -466,7 +473,7 @@ fn rounded(frame: NSRect, radius: f64, fill: &NSColor, stroke: &NSColor) {
 }
 
 fn line(x: f64, y: f64, width: f64) {
-    NSColor::colorWithWhite_alpha(1.0, 0.13).setStroke();
+    ink()(0.13).setStroke();
     let path = NSBezierPath::bezierPath();
     path.moveToPoint(NSPoint::new(x, y));
     path.lineToPoint(NSPoint::new(x + width, y));
@@ -477,7 +484,7 @@ fn label(view: &NSView, text: &str, frame: NSRect, size: f64) -> Retained<NSText
     let label = NSTextField::labelWithString(&NSString::from_str(text), view.mtm());
     label.setFrame(frame);
     label.setFont(Some(&NSFont::systemFontOfSize(size)));
-    label.setTextColor(Some(&NSColor::colorWithWhite_alpha(1.0, 0.95)));
+    label.setTextColor(Some(&NSColor::labelColor()));
     view.addSubview(&label);
     label
 }
@@ -495,7 +502,7 @@ fn symbol(name: &str) -> Retained<NSImage> {
 fn icon(view: &NSView, name: &str, frame: NSRect) {
     let image = NSImageView::imageViewWithImage(&symbol(name), view.mtm());
     image.setFrame(frame);
-    image.setContentTintColor(Some(&NSColor::whiteColor()));
+    image.setContentTintColor(Some(&NSColor::secondaryLabelColor()));
     image.setImageScaling(NSImageScaling::ScaleProportionallyUpOrDown);
     view.addSubview(&image);
 }
@@ -519,7 +526,7 @@ fn button(
     button.setFrame(frame);
     button.setBordered(false);
     button.setFont(Some(&NSFont::systemFontOfSize(14.0)));
-    button.setContentTintColor(Some(&NSColor::whiteColor()));
+    button.setContentTintColor(Some(&NSColor::labelColor()));
     view.addSubview(&button);
     button
 }

@@ -41,10 +41,11 @@ impl InputTap {
                 CGEventTapLocation::SessionEventTap,
                 CGEventTapPlacement::TailAppendEventTap,
                 CGEventTapOptions::ListenOnly,
-                // Presses only: one physical action is one sound. Releases are not
-                // observed, so a click or a key press cannot play a second sound.
+                // Presses sound; key-up is only watched so profiles that ship a
+                // release sample can answer it. Mouse-up never sounds.
                 [
                     CGEventType::KeyDown,
+                    CGEventType::KeyUp,
                     CGEventType::FlagsChanged,
                     CGEventType::LeftMouseDown,
                     CGEventType::RightMouseDown,
@@ -117,10 +118,15 @@ unsafe extern "C-unwind" fn callback(
                 }
             }
         }
-    } else if mouse_clicked(event_type) {
+    } else if event_type == CGEventType::KeyUp {
         let _ = context
             .sender
-            .try_send(Command::Mouse { at: Instant::now() });
+            .try_send(Command::KeyUp { at: Instant::now() });
+    } else if let Some(right) = mouse_clicked(event_type) {
+        let _ = context.sender.try_send(Command::Mouse {
+            right,
+            at: Instant::now(),
+        });
     }
     event.as_ptr()
 }
@@ -151,11 +157,14 @@ fn key_pressed(kind: CGEventType, keycode: u16, flags: CGEventFlags) -> bool {
     }
 }
 
-fn mouse_clicked(kind: CGEventType) -> bool {
-    matches!(
-        kind,
-        CGEventType::LeftMouseDown | CGEventType::RightMouseDown | CGEventType::OtherMouseDown
-    )
+/// The profile ships one click per button branch, so the right button is told
+/// apart from every other button; the primary and the extra buttons share `_1`.
+fn mouse_clicked(kind: CGEventType) -> Option<bool> {
+    match kind {
+        CGEventType::RightMouseDown => Some(true),
+        CGEventType::LeftMouseDown | CGEventType::OtherMouseDown => Some(false),
+        _ => None,
+    }
 }
 
 #[cfg(test)]

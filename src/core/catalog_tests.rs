@@ -31,23 +31,19 @@ fn catalog_covers_every_packaged_sound_and_preserves_routes() {
                 used.insert(index);
             }
         }
-    }
-    for profile in MouseProfile::all() {
-        if let Some(index) = profile.sample_index() {
+        if let Some(index) = profile.release_index() {
             used.insert(index);
         }
     }
-    // Key-up and mouse-up are not observed, so the release sample and the second
-    // mouse variant of every pair are packaged but never routed.
-    let unreachable = |name: &str| {
-        name == "t_bell_release.wav" || (name.starts_with("mouse_") && name.ends_with("_2.wav"))
-    };
+    for profile in MouseProfile::all() {
+        for right in [false, true] {
+            if let Some(index) = profile.sample_index(right) {
+                used.insert(index);
+            }
+        }
+    }
     for (index, name) in names.iter().enumerate() {
-        assert_eq!(
-            used.contains(&index),
-            !unreachable(name),
-            "{name} routing changed"
-        );
+        assert!(used.contains(&index), "{name} is packaged but never routed");
     }
     for profile in [Profile(0), Profile(1), Profile(2)] {
         let prefix = KEYBOARDS[profile.0 as usize].1;
@@ -64,14 +60,35 @@ fn catalog_covers_every_packaged_sound_and_preserves_routes() {
             );
         }
     }
-    assert_eq!(MouseProfile(0).sample_index(), None);
+    // A pair is one click per button branch: primary and extra buttons use `_1`,
+    // the right button uses the longer `_2`.
+    assert_eq!(MouseProfile(0).sample_index(false), None);
+    assert_eq!(MouseProfile(0).sample_index(true), None);
     assert_eq!(
-        names[MouseProfile(1).sample_index().unwrap()],
+        names[MouseProfile(1).sample_index(false).unwrap()],
         "mouse_1_1.wav"
     );
     assert_eq!(
-        names[MouseProfile(15).sample_index().unwrap()],
+        names[MouseProfile(1).sample_index(true).unwrap()],
+        "mouse_1_2.wav"
+    );
+    assert_eq!(
+        names[MouseProfile(15).sample_index(false).unwrap()],
         "mouse_c_1.wav"
+    );
+    assert_eq!(
+        names[MouseProfile(15).sample_index(true).unwrap()],
+        "mouse_c_2.wav"
+    );
+    let bell = Profile::all()
+        .find(|profile| profile.release_index().is_some())
+        .expect("one profile ships a release sample");
+    assert_eq!(names[bell.release_index().unwrap()], "t_bell_release.wav");
+    assert_eq!(Profile(0).release_index(), None);
+    assert!(
+        Profile(0)
+            .sample_indices()
+            .all(|index| !names[index].ends_with("_release.wav"))
     );
     assert_eq!(Profile::from_index(255), Profile(0));
     assert_eq!(MouseProfile::from_index(255), MouseProfile(0));

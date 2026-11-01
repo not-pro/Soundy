@@ -18,6 +18,7 @@ use rodio::{Decoder, DeviceSinkBuilder, MixerDeviceSink, Player, Source};
 use crate::core::{
     catalog::{self, MouseProfile, Profile},
     i18n::{Language, Text},
+    variation,
 };
 
 pub struct Controls {
@@ -38,7 +39,8 @@ impl Default for Controls {
 
 pub enum Command {
     Key { keycode: u16, at: Instant },
-    Mouse { at: Instant },
+    KeyUp { at: Instant },
+    Mouse { right: bool, at: Instant },
     Preview,
     PreviewMouse,
     Stop,
@@ -85,13 +87,18 @@ impl Worker {
                         {
                             profile.sample_index(keycode)
                         }
-                        Some(Command::Mouse { at })
+                        Some(Command::KeyUp { at })
                             if at.elapsed() < Duration::from_millis(100) =>
                         {
-                            mouse.sample_index()
+                            profile.release_index()
+                        }
+                        Some(Command::Mouse { right, at })
+                            if at.elapsed() < Duration::from_millis(100) =>
+                        {
+                            mouse.sample_index(right)
                         }
                         Some(Command::Preview) => profile.sample_index(0),
-                        Some(Command::PreviewMouse) => mouse.sample_index(),
+                        Some(Command::PreviewMouse) => mouse.sample_index(false),
                         _ => None,
                     };
                     if let Some(index) = index {
@@ -141,6 +148,8 @@ struct Audio {
     // ponytail: per-file 15ms gate, matching the macOS build; hammering one key
     // faster than that is the only case worth debouncing.
     last_play: Vec<Option<Instant>>,
+    last_variant: Vec<Option<u8>>,
+    random: variation::Random,
 }
 
 impl Audio {
@@ -151,6 +160,8 @@ impl Audio {
             voices: Vec::new(),
             device,
             last_play: vec![None; catalog::files().count()],
+            last_variant: vec![None; catalog::files().count()],
+            random: variation::Random::new(),
         })
     }
 
@@ -180,12 +191,20 @@ impl Audio {
                 return;
             }
         };
-        let duration = decoder
+        // Same pitch/length and level variation as the macOS build: rodio's speed
+        // filter changes the sample rate, which shifts pitch and duration together.
+        let variant = self
+            .random
+            .pick(self.last_variant[index], variation::RATIOS.len() as u8);
+        self.last_variant[index] = Some(variant);
+        let source = decoder.speed(variation::RATIOS[usize::from(variant)]);
+        let level = self.random.level();
+        let duration = source
             .total_duration()
             .unwrap_or(Duration::from_millis(100));
         let player = Player::connect_new(self.device.mixer());
-        player.set_volume(f32::from(volume.min(100)) / 100.0);
-        player.append(decoder);
+        player.set_volume((f32::from(volume.min(100)) / 100.0 * level).min(1.0));
+        player.append(source);
         self.voices.push(Voice {
             player,
             until: now + duration + RELEASE,

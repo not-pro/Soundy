@@ -7,7 +7,7 @@ use std::{
 };
 
 use objc2::{
-    AnyThread, DefinedClass, MainThreadOnly, define_class, msg_send,
+    AnyThread, ClassType, DefinedClass, MainThreadOnly, define_class, msg_send,
     rc::Retained,
     runtime::{AnyObject, ProtocolObject},
     sel,
@@ -15,7 +15,7 @@ use objc2::{
 use objc2_app_kit::{
     NSAccessibility, NSAlert, NSApplication, NSApplicationActivationPolicy, NSApplicationDelegate,
     NSButton, NSImage, NSMenu, NSMenuDelegate, NSMenuItem, NSPopUpButton, NSPopover, NSSlider,
-    NSStatusBar, NSStatusItem, NSWindow, NSWindowDelegate, NSWorkspace,
+    NSStatusBar, NSStatusItem, NSVisualEffectView, NSWindow, NSWindowDelegate, NSWorkspace,
 };
 use objc2_core_graphics::{CGPreflightListenEventAccess, CGRequestListenEventAccess};
 use objc2_foundation::{
@@ -336,9 +336,15 @@ define_class!(
                     let weak = objc2::rc::Weak::from_retained(&window);
                     assert!(window.styleMask().contains(objc2_app_kit::NSWindowStyleMask::Titled), "system window must own corner clipping");
                     assert!(!window.isOpaque());
-                    if let Some(class) = objc2::runtime::AnyClass::get(c"NSGlassEffectView") {
-                        assert!(window.contentView().unwrap().isKindOfClass(class));
-                    }
+                    // Vibrancy, never the Liquid Glass view: it follows the system
+                    // appearance instead of forcing a dark one.
+                    assert!(
+                        window
+                            .contentView()
+                            .unwrap()
+                            .isKindOfClass(NSVisualEffectView::class()),
+                        "settings window must use a vibrancy view"
+                    );
                     self.open_settings(sel!(openSettings:), self);
                     assert!(std::ptr::eq(&**self.ivars().window.borrow().as_ref().unwrap(), &*window), "reuse the visible window");
                     let view = settings::content(&window);

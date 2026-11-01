@@ -87,7 +87,12 @@ unsafe extern "system" fn keyboard_hook(code: i32, wparam: WPARAM, lparam: LPARA
                     });
                 }
             }
-            WM_KEYUP | WM_SYSKEYUP => lock(&PRESSED).up(vk),
+            // Key-up only matters for the one profile that ships a release sample.
+            WM_KEYUP | WM_SYSKEYUP => {
+                if lock(&PRESSED).up(vk) && event.flags.0 & LLKHF_INJECTED == 0 {
+                    send(Command::KeyUp { at: Instant::now() });
+                }
+            }
             _ => {}
         }
     }
@@ -100,13 +105,18 @@ unsafe extern "system" fn mouse_hook(code: i32, wparam: WPARAM, lparam: LPARAM) 
         // SAFETY: For nCode >= 0 Windows passes an MSLLHOOKSTRUCT pointer in lParam.
         let event = unsafe { &*(lparam.0 as *const MSLLHOOKSTRUCT) };
         let injected = event.flags & LLMHF_INJECTED != 0;
+        let right = wparam.0 as u32 == WM_RBUTTONDOWN;
         if !injected
-            && matches!(
-                wparam.0 as u32,
-                WM_LBUTTONDOWN | WM_RBUTTONDOWN | WM_MBUTTONDOWN | WM_XBUTTONDOWN
-            )
+            && (right
+                || matches!(
+                    wparam.0 as u32,
+                    WM_LBUTTONDOWN | WM_MBUTTONDOWN | WM_XBUTTONDOWN
+                ))
         {
-            send(Command::Mouse { at: Instant::now() });
+            send(Command::Mouse {
+                right,
+                at: Instant::now(),
+            });
         }
     }
     // SAFETY: Passing this callback's arguments through unchanged is the contract.
@@ -157,10 +167,11 @@ impl Pressed {
         !std::mem::replace(slot, true)
     }
 
-    fn up(&mut self, vk: u32) {
-        if let Some(slot) = self.0.get_mut(vk as usize) {
-            *slot = false;
-        }
+    /// True when the key was down, so a repeated release sends nothing.
+    fn up(&mut self, vk: u32) -> bool {
+        self.0
+            .get_mut(vk as usize)
+            .is_some_and(|slot| std::mem::replace(slot, false))
     }
 }
 
@@ -173,7 +184,11 @@ mod tests {
         let mut pressed = Pressed::new();
         assert!(pressed.down(0x41));
         assert!(!pressed.down(0x41), "a held key must not play again");
-        pressed.up(0x41);
+        assert!(
+            pressed.up(0x41),
+            "the release of a held key is a real release"
+        );
+        assert!(!pressed.up(0x41), "a repeated release must stay silent");
         assert!(pressed.down(0x41), "a fresh press must play again");
         assert!(!pressed.down(0x200), "codes beyond 255 are out of range");
     }
