@@ -1,5 +1,5 @@
 use std::{
-    path::Path,
+    path::{Path, PathBuf},
     sync::{
         Arc,
         atomic::{AtomicBool, AtomicU8, Ordering},
@@ -25,6 +25,11 @@ use crate::core::{
     i18n::{Language, Text},
     pan, variation,
 };
+
+/// macOS uses a real `Sounds/` folder, so the bundled variant is not needed.
+pub enum Sounds {
+    Files(PathBuf),
+}
 
 pub struct Controls {
     pub profile: AtomicU8,

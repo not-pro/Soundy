@@ -4,7 +4,6 @@
 use std::{
     ffi::OsStr,
     os::windows::ffi::OsStrExt,
-    path::Path,
     sync::{Arc, atomic::Ordering},
 };
 
@@ -448,7 +447,11 @@ unsafe extern "system" fn wndproc(
     }
 }
 
-pub fn run(root: &Path, smoke_test: bool, language: Language) -> Result<(), String> {
+pub fn run(
+    sounds: crate::core::audio::Sounds,
+    smoke_test: bool,
+    language: Language,
+) -> Result<(), String> {
     // Two copies (one autostart entry plus a manual launch) would each install
     // hooks and play every sound twice.
     if !smoke_test && !claim_single_instance() {
@@ -470,7 +473,7 @@ pub fn run(root: &Path, smoke_test: bool, language: Language) -> Result<(), Stri
     let worker = if smoke_test {
         None
     } else {
-        Some(Worker::start(root, controls.clone(), language)?)
+        Some(Worker::start(sounds, controls.clone(), language)?)
     };
 
     let instance = unsafe { GetModuleHandleW(None) }.map_err(|e| e.to_string())?;

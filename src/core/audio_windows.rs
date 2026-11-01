@@ -2,8 +2,8 @@
 //! instead of cutting each other off.
 
 use std::{
-    fs::File,
-    path::Path,
+    io::Cursor,
+    path::{Path, PathBuf},
     sync::{
         Arc,
         atomic::{AtomicU8, Ordering},
@@ -46,21 +46,57 @@ pub enum Command {
     Stop,
 }
 
+/// Source of WAV samples: either a `Sounds/` folder on disk or a bundled,
+/// compressed archive embedded in the EXE.
+pub enum Sounds {
+    Files(PathBuf),
+    Bundled(Arc<crate::core::bundle::Cache>),
+}
+
+impl Sounds {
+    /// Fetch one sample by catalog index. For the file-backed mode the WAV is
+    /// read from disk; for the bundled mode it is taken from the in-memory
+    /// profile cache.
+    fn get(&self, index: usize) -> Option<Arc<[u8]>> {
+        let name = catalog::files().nth(index)?;
+        match self {
+            Sounds::Files(root) => {
+                let bytes = std::fs::read(root.join(name)).ok()?;
+                Some(bytes.into())
+            }
+            Sounds::Bundled(cache) => cache.get(index),
+        }
+    }
+
+    /// For the bundled mode, keep only the samples needed by the active
+    /// profiles in memory. File-backed mode needs no cache management.
+    fn ensure(&self, profile: Profile, mouse: MouseProfile) {
+        if let Sounds::Bundled(cache) = self {
+            cache.ensure(profile, mouse);
+        }
+    }
+}
+
 pub struct Worker {
     pub sender: SyncSender<Command>,
     thread: Option<JoinHandle<()>>,
 }
 
 impl Worker {
-    pub fn start(root: &Path, controls: Arc<Controls>, language: Language) -> Result<Self, String> {
-        catalog::validate(root, language)?;
-        let root = root.to_owned();
+    pub fn start(
+        sounds: Sounds,
+        controls: Arc<Controls>,
+        language: Language,
+    ) -> Result<Self, String> {
+        if let Sounds::Files(root) = &sounds {
+            catalog::validate(root, language)?;
+        }
         let (sender, receiver) = mpsc::sync_channel(32);
         let (ready_sender, ready_receiver) = mpsc::sync_channel(1);
         let thread = thread::Builder::new()
             .name("soundy-audio".into())
             .spawn(move || {
-                let mut audio = match Audio::new(language) {
+                let mut audio = match Audio::new(sounds, language) {
                     Ok(audio) => audio,
                     Err(error) => {
                         let _ = ready_sender.send(Err(error));
@@ -81,6 +117,7 @@ impl Worker {
                     let mouse = MouseProfile::from_index(
                         controls.mouse_profile.load(Ordering::Relaxed).into(),
                     );
+                    audio.sounds.ensure(profile, mouse);
                     let index = match command {
                         Some(Command::Key { keycode, at })
                             if at.elapsed() < Duration::from_millis(100) =>
@@ -102,7 +139,7 @@ impl Worker {
                         _ => None,
                     };
                     if let Some(index) = index {
-                        audio.play(&root, index, controls.volume.load(Ordering::Relaxed));
+                        audio.play(index, controls.volume.load(Ordering::Relaxed));
                     }
                     audio.evict_finished();
                 }
@@ -142,7 +179,9 @@ struct Voice {
 }
 
 struct Audio {
-    // Declared first so every player is dropped before the device it plays on.
+    sounds: Sounds,
+    // Declared before the device so every player is dropped before the device
+    // it plays on.
     voices: Vec<Voice>,
     device: MixerDeviceSink,
     // ponytail: per-file 15ms gate, matching the macOS build; hammering one key
@@ -153,10 +192,11 @@ struct Audio {
 }
 
 impl Audio {
-    fn new(language: Language) -> Result<Self, String> {
+    fn new(sounds: Sounds, language: Language) -> Result<Self, String> {
         let device = DeviceSinkBuilder::open_default_sink()
             .map_err(|e| format!("{}: {e}", language.text(Text::AudioOutputFailed)))?;
         Ok(Self {
+            sounds,
             voices: Vec::new(),
             device,
             last_play: vec![None; catalog::files().count()],
@@ -165,7 +205,7 @@ impl Audio {
         })
     }
 
-    fn play(&mut self, root: &Path, index: usize, volume: u8) {
+    fn play(&mut self, index: usize, volume: u8) {
         if volume == 0 || index >= self.last_play.len() {
             return;
         }
@@ -177,17 +217,14 @@ impl Audio {
         }
         self.last_play[index] = Some(now);
         let name = catalog::files().nth(index).expect("catalog sample index");
-        let path = root.join(name);
-        // No decoded-sample cache: a keypress-sized WAV decodes in well under a
-        // millisecond, so caching would only add bookkeeping.
-        let Ok(file) = File::open(&path) else {
-            eprintln!("Soundy: {}: cannot open", path.display());
+        let Some(bytes) = self.sounds.get(index) else {
+            eprintln!("Soundy: {}: cannot open", name);
             return;
         };
-        let decoder = match Decoder::try_from(file) {
+        let decoder = match Decoder::try_from(Cursor::new(bytes)) {
             Ok(decoder) => decoder,
             Err(error) => {
-                eprintln!("Soundy: {}: {error}", path.display());
+                eprintln!("Soundy: {}: {error}", name);
                 return;
             }
         };
@@ -220,18 +257,15 @@ impl Audio {
 
 pub fn check(root: &Path, language: Language) -> Result<(), String> {
     catalog::validate(root, language)?;
-    for name in catalog::files() {
-        let path = root.join(name);
-        // Decode every sample so a truncated WAV fails here, not at play time.
+    let sounds = Sounds::Files(root.to_owned());
+    for (index, name) in catalog::files().enumerate() {
+        let bytes = sounds
+            .get(index)
+            .ok_or_else(|| format!("{}: cannot open", name))?;
         let decoder =
-            Decoder::try_from(File::open(&path).map_err(|e| format!("{}: {e}", path.display()))?)
-                .map_err(|e| format!("{}: {e}", path.display()))?;
+            Decoder::try_from(Cursor::new(bytes)).map_err(|e| format!("{}: {e}", name))?;
         if decoder.count() == 0 {
-            return Err(format!(
-                "{}: {}",
-                language.text(Text::IncompleteWav),
-                path.display()
-            ));
+            return Err(format!("{}: {}", language.text(Text::IncompleteWav), name));
         }
     }
     Ok(())

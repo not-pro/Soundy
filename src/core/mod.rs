@@ -3,6 +3,8 @@ pub mod audio;
 #[cfg(windows)]
 #[path = "audio_windows.rs"]
 pub mod audio;
+#[cfg(windows)]
+pub mod bundle;
 pub mod catalog;
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))] // macOS-only feature set so far
 pub mod hotkeys;

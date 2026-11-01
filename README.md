@@ -22,7 +22,7 @@ Every press is one sound, but no two presses sound identical: each one resamples
 
 Only sounds for the selected keyboard and mouse profiles are loaded into memory on macOS, where previously selected sounds stay cached for 10 seconds after switching, then are released, including while Soundy is idle. Windows decodes one WAV per press and keeps no cache.
 
-**Enabled** in the menu mutes everything while keeping your profiles, volume, and hotkeys; the **Shortcuts** menu records global hotkeys for sound on/off, volume up/down, and toggling the current app's sound (click an action, press the keys, Esc cancels), and they keep working while sounds are off. The **For <App>** menu pins a keyboard profile, a mouse sound, or complete silence to the frontmost application, and **Play Through** restricts sounds to headphones or speakers with the current output shown in the menu. **Stereo Key Position** optionally pans each key to its physical spot. These controls are macOS-only in 2.0.0; the Windows build keeps its existing tray features.
+**Enabled** in the menu mutes everything while keeping your profiles, volume, and hotkeys; the **Shortcuts** menu records global hotkeys for sound on/off, volume up/down, and toggling the current app's sound (click an action, press the keys, Esc cancels), and they keep working while sounds are off. The **For <App>** menu pins a keyboard profile, a mouse sound, or complete silence to the frontmost application, and **Play Through** restricts sounds to headphones or speakers with the current output shown in the menu. **Stereo Key Position** optionally pans each key to its physical spot. These controls are macOS-only in 2.1.0; the Windows build keeps its existing tray features.
 
 No accounts, subscriptions, or time limits. Sound playback runs locally; on macOS, update checks contact GitHub.
 
@@ -38,7 +38,7 @@ No accounts, subscriptions, or time limits. Sound playback runs locally; on macO
 **Windows**
 
 1. Download `Soundy-v*-windows-x64.zip` from the same release and unzip it anywhere you can write to, for example `%LOCALAPPDATA%\Programs`.
-2. Run `Soundy.exe` from the unzipped `Soundy` folder. A tray icon appears in the notification area; Windows may keep it behind the overflow arrow — drag it out to pin it. The build is not code-signed, so SmartScreen can ask for confirmation: choose **More info → Run anyway**.
+2. Run `Soundy.exe`. The sounds live inside the EXE, so no extra folder is needed. A tray icon appears in the notification area; Windows may keep it behind the overflow arrow — drag it out to pin it. The build is not code-signed, so SmartScreen can ask for confirmation: choose **More info → Run anyway**.
 3. Right-click the tray icon and choose **Keyboard Sound** and **Mouse Sound**, then start typing.
 
 Requires **macOS 13 or later**, or **Windows 10 or later**.

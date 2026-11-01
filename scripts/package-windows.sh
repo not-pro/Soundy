@@ -28,7 +28,6 @@ bundle="dist/$archive/Soundy"
 rm -rf "dist/$archive"
 mkdir -p "$bundle"
 cp "target/$target/release/soundy.exe" "$bundle/Soundy.exe"
-cp -R assets/sounds "$bundle/Sounds"
 cp assets/icons/Soundy.ico "$bundle/Soundy.ico"
 cp README.md "$bundle/README.md"
 # Only a native build can be executed here; cross builds are checked in CI.

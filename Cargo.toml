@@ -1,6 +1,6 @@
 [package]
 name = "soundy"
-version = "2.0.0"
+version = "2.1.0"
 edition = "2024"
 rust-version = "1.85"
 description = "Keyboard and mouse sounds for macOS and Windows"
@@ -20,6 +20,7 @@ objc2-audio-toolbox = { version = "0.3.2", default-features = false, features = 
 
 [target.'cfg(windows)'.dependencies]
 rodio = { version = "0.23.0", default-features = false, features = ["playback", "wav"] }
+flate2 = "1"
 windows = { version = "0.62.2", features = [
     "Win32_Foundation",
     "Win32_Globalization",
@@ -31,6 +32,9 @@ windows = { version = "0.62.2", features = [
     "Win32_UI_Shell",
     "Win32_UI_WindowsAndMessaging",
 ] }
+
+[build-dependencies]
+flate2 = "1"
 
 [profile.release]
 lto = "thin"
