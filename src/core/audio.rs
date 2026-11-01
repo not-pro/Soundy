@@ -152,7 +152,7 @@ impl Drop for Worker {
     }
 }
 
-const CACHE_TTL: Duration = Duration::from_secs(60);
+const CACHE_TTL: Duration = Duration::from_secs(10);
 const CACHE_SWEEP_INTERVAL: Duration = Duration::from_secs(1);
 
 struct Voice {
@@ -328,6 +328,15 @@ impl Player {
                         .is_none_or(|last| now.saturating_duration_since(last) >= sample.duration)
             }) {
                 *slot = None;
+            }
+        }
+        for pool in self.pools.iter_mut().flatten() {
+            // A pitched variant only needs to live until its voice falls silent;
+            // keeping it resident triples the cache footprint for no audible gain.
+            for voice in &mut pool.voices {
+                if voice.busy_until <= now {
+                    voice.buffer = None;
+                }
             }
         }
         for (index, slot) in self.pools.iter_mut().enumerate() {

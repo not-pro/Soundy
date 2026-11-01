@@ -47,7 +47,9 @@ define_class!(
         #[unsafe(method(tag))]
         fn content_tag(&self) -> isize { 200 }
         #[unsafe(method(drawRect:))]
-        fn draw(&self, _dirty: NSRect) {
+        fn draw(&self, dirty: NSRect) {
+            NSColor::windowBackgroundColor().setFill();
+            NSBezierPath::fillRect(dirty);
             let ink = ink();
             for frame in [rect(8.0, 139.0, 224.0, 72.0), rect(8.0, 85.0, 224.0, 48.0), rect(8.0, 53.0, 224.0, 28.0), rect(8.0, 21.0, 224.0, 28.0)] {
                 rounded(frame, 8.0, &ink(0.055), &ink(0.22));
@@ -109,9 +111,9 @@ pub fn create(mtm: MainThreadMarker) -> Retained<NSWindow> {
     window.setTitle(ns_string!("Soundy"));
     window.setMovableByWindowBackground(true);
     window.setRestorable(false);
-    window.setOpaque(false);
+    window.setOpaque(true);
     window.setHasShadow(true);
-    window.setBackgroundColor(Some(&NSColor::clearColor()));
+    window.setBackgroundColor(Some(&NSColor::windowBackgroundColor()));
     window.center();
     Retained::into_super(window)
 }
@@ -135,14 +137,6 @@ pub fn populate(
         login: login.state() == 1,
     });
     let view: Retained<Glass> = unsafe { msg_send![super(view), initWithFrame: bounds] };
-    // System vibrancy instead of the Liquid Glass view: it follows the light or dark
-    // appearance and costs a fraction of the memory the glass effect keeps resident.
-    let glass = NSVisualEffectView::initWithFrame(NSVisualEffectView::alloc(mtm), bounds);
-    glass.setMaterial(NSVisualEffectMaterial::Popover);
-    glass.setBlendingMode(NSVisualEffectBlendingMode::BehindWindow);
-    glass.setState(NSVisualEffectState::Active);
-    glass.addSubview(&view);
-    let glass: Retained<NSView> = Retained::into_super(glass);
     symbol_button(
         &view,
         "xmark",
@@ -312,7 +306,7 @@ pub fn populate(
         target,
         sel!(showAbout:),
     );
-    window.setContentView(Some(&glass));
+    window.setContentView(Some(&view));
     sync_volume(window, language, volume);
 }
 
@@ -450,7 +444,7 @@ fn dark() -> bool {
             .to_string()
             .contains("Dark"),
         // Before the app finishes launching there is nothing to match; dark reads
-        // correctly on either appearance because the panels are translucent.
+        // correctly either way because the ink panels sit on a solid background.
         None => true,
     }
 }

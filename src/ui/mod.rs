@@ -335,15 +335,14 @@ define_class!(
                     let window = self.ivars().window.borrow().as_ref().unwrap().clone();
                     let weak = objc2::rc::Weak::from_retained(&window);
                     assert!(window.styleMask().contains(objc2_app_kit::NSWindowStyleMask::Titled), "system window must own corner clipping");
-                    assert!(!window.isOpaque());
-                    // Vibrancy, never the Liquid Glass view: it follows the system
-                    // appearance instead of forcing a dark one.
+                    assert!(window.isOpaque());
+                    // Plain themed background, never a vibrancy or Liquid Glass view.
                     assert!(
-                        window
+                        !window
                             .contentView()
                             .unwrap()
                             .isKindOfClass(NSVisualEffectView::class()),
-                        "settings window must use a vibrancy view"
+                        "settings window must not use a vibrancy view"
                     );
                     self.open_settings(sel!(openSettings:), self);
                     assert!(std::ptr::eq(&**self.ivars().window.borrow().as_ref().unwrap(), &*window), "reuse the visible window");

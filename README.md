@@ -20,7 +20,7 @@ On macOS, Soundy checks for updates in the background each time it starts. When 
 
 Every press is one sound, but no two presses sound identical: each one resamples its sample a few percent up or down and shifts the level by up to 1.5 dB, never repeating the previous variant. The right mouse button plays its own click, separate from the primary and middle buttons, and the Bell typewriter profile also answers key-up with its release sample.
 
-Only sounds for the selected keyboard and mouse profiles are loaded into memory on macOS, where previously selected sounds stay cached for 60 seconds after switching, then are released, including while Soundy is idle. Windows decodes one WAV per press and keeps no cache.
+Only sounds for the selected keyboard and mouse profiles are loaded into memory on macOS, where previously selected sounds stay cached for 10 seconds after switching, then are released, including while Soundy is idle. Windows decodes one WAV per press and keeps no cache.
 
 No accounts, subscriptions, or time limits. Sound playback runs locally; on macOS, update checks contact GitHub.
 

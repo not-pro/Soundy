@@ -85,15 +85,15 @@ fn profile_cache_loads_only_selected_sounds_reuses_and_expires_them() {
                 now + Duration::from_secs(3),
             )
             .unwrap();
-        player.evict_expired(now + Duration::from_secs(62));
+        player.evict_expired(now + Duration::from_secs(12));
         assert_eq!(cached(&player), first_count + second_count);
         // A scheduled tail must finish even after the inactive cache entry expires.
         let tail = player.samples[first].as_mut().unwrap();
-        tail.last_play = Some(now + Duration::from_secs(63));
+        tail.last_play = Some(now + Duration::from_secs(13));
         tail.duration = Duration::from_secs(2);
-        player.evict_expired(now + Duration::from_secs(64));
+        player.evict_expired(now + Duration::from_secs(14));
         assert_eq!(cached(&player), second_count + 1);
-        player.evict_expired(now + Duration::from_secs(66));
+        player.evict_expired(now + Duration::from_secs(16));
         assert_eq!(cached(&player), second_count);
         assert!(player.samples[first].is_none());
         for (index, pool) in player.pools.iter().enumerate() {
@@ -118,7 +118,7 @@ fn profile_cache_loads_only_selected_sounds_reuses_and_expires_them() {
                 now + Duration::from_secs(3601),
             )
             .unwrap();
-        player.evict_expired(now + Duration::from_secs(3662));
+        player.evict_expired(now + Duration::from_secs(3612));
         assert_eq!(cached(&player), Profile(0).sample_indices().count());
         // The decoder needs only the selected profile, even if unrelated
         // sounds are missing or malformed. --check still validates all WAVs.
@@ -146,5 +146,42 @@ fn profile_cache_loads_only_selected_sounds_reuses_and_expires_them() {
         assert_eq!(cached(&partial_player), Profile(0).sample_indices().count());
         assert!(check(&partial, Language::English).is_err());
         std::fs::remove_dir_all(partial).unwrap();
+    });
+}
+
+#[test]
+fn pitched_variant_buffers_are_released_once_the_voice_goes_idle() {
+    autoreleasepool(|_| {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("assets/sounds");
+        let mut player = Player::new();
+        let index = Profile(0).sample_index(0).unwrap();
+        player
+            .select_profiles(&root, Profile(0), MouseProfile(1), Language::English, Instant::now())
+            .unwrap();
+        // Force a pitched variant: the picker never repeats the last variant index,
+        // and RATIOS[2] is 1.0, so any other index resamples the buffer.
+        player.samples[index].as_mut().unwrap().last_variant = Some(2);
+        player.play(index, 50);
+        let with_buffer = player
+            .pools
+            .iter()
+            .flatten()
+            .flat_map(|pool| pool.voices.iter())
+            .filter(|voice| voice.buffer.is_some())
+            .count();
+        assert_eq!(with_buffer, 1);
+        player.evict_expired(Instant::now() + Duration::from_secs(5));
+        assert!(
+            player
+                .pools
+                .iter()
+                .flatten()
+                .flat_map(|pool| pool.voices.iter())
+                .all(|voice| voice.buffer.is_none())
+        );
+        assert!(
+            player.samples[index].is_some(),
+            "an active profile keeps its cached sample"
+        );
     });
 }
