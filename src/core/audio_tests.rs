@@ -156,7 +156,13 @@ fn pitched_variant_buffers_are_released_once_the_voice_goes_idle() {
         let mut player = Player::new();
         let index = Profile(0).sample_index(0).unwrap();
         player
-            .select_profiles(&root, Profile(0), MouseProfile(1), Language::English, Instant::now())
+            .select_profiles(
+                &root,
+                Profile(0),
+                MouseProfile(1),
+                Language::English,
+                Instant::now(),
+            )
             .unwrap();
         // Force a pitched variant: the picker never repeats the last variant index,
         // and RATIOS[2] is 1.0, so any other index resamples the buffer.

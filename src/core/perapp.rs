@@ -20,7 +20,12 @@ pub struct Override {
 pub type Map = HashMap<String, Override>;
 
 /// The effective profiles for a frontmost app: `None` keyboard means silent.
-pub fn resolve(map: &Map, bundle: Option<&str>, global_keyboard: u8, global_mouse: u8) -> (Option<u8>, u8) {
+pub fn resolve(
+    map: &Map,
+    bundle: Option<&str>,
+    global_keyboard: u8,
+    global_mouse: u8,
+) -> (Option<u8>, u8) {
     match bundle.and_then(|bundle| map.get(bundle)) {
         Some(over) => (
             (over.keyboard >= 0).then_some(over.keyboard as u8),
@@ -77,7 +82,13 @@ mod tests {
     #[test]
     fn map_round_trips_and_garbage_yields_empty() {
         let mut map = Map::new();
-        map.insert("a".into(), Override { keyboard: -1, mouse: 0 });
+        map.insert(
+            "a".into(),
+            Override {
+                keyboard: -1,
+                mouse: 0,
+            },
+        );
         let restored = load(Some(&save(&map)));
         assert_eq!(restored, map);
         assert!(load(None).is_empty());

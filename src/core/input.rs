@@ -2,11 +2,7 @@ use std::{
     cell::Cell,
     ffi::c_void,
     ptr::NonNull,
-    sync::{
-        Arc,
-        mpsc::SyncSender,
-        Mutex,
-    },
+    sync::{Arc, Mutex, mpsc::SyncSender},
     time::Instant,
 };
 
@@ -144,10 +140,9 @@ unsafe extern "C-unwind" fn callback(
             let keycode =
                 CGEvent::integer_value_field(event_ref, CGEventField::KeyboardEventKeycode);
             if let Ok(keycode) = u16::try_from(keycode) {
-                if event_type == CGEventType::KeyDown {
-                    if handle_hotkey(context, keycode, event_ref) {
-                        return event.as_ptr();
-                    }
+                if event_type == CGEventType::KeyDown && handle_hotkey(context, keycode, event_ref)
+                {
+                    return event.as_ptr();
                 }
                 if key_pressed(event_type, keycode, CGEvent::flags(event_ref)) {
                     // A full queue drops a sound, never stalls keyboard input.
@@ -184,7 +179,7 @@ unsafe extern "C-unwind" fn callback(
 /// Normalized four-standard-modifier mask for the hotkey matcher.
 fn normalized_modifiers(flags: CGEventFlags) -> u16 {
     let bits = flags.bits();
-    (u16::from(bits & FLAG_CONTROL != 0) << 0)
+    u16::from(bits & FLAG_CONTROL != 0)
         | (u16::from(bits & FLAG_OPTION != 0) << 1)
         | (u16::from(bits & FLAG_SHIFT != 0) << 2)
         | (u16::from(bits & FLAG_COMMAND != 0) << 3)

@@ -139,13 +139,16 @@ fn read_property<T>(object: u32, selector: u32, scope: u32) -> Option<T> {
             value.as_mut_ptr().cast(),
         )
     };
-    (status == 0 && size as usize == std::mem::size_of::<T>()).then(|| unsafe {
-        value.assume_init()
-    })
+    (status == 0 && size as usize == std::mem::size_of::<T>())
+        .then(|| unsafe { value.assume_init() })
 }
 
 pub fn default_output_device() -> Option<u32> {
-    read_property(K_AUDIO_OBJECT_SYSTEM_OBJECT, PROP_DEFAULT_OUTPUT, SCOPE_GLOBAL)
+    read_property(
+        K_AUDIO_OBJECT_SYSTEM_OBJECT,
+        PROP_DEFAULT_OUTPUT,
+        SCOPE_GLOBAL,
+    )
 }
 
 fn device_class(device: u32) -> DeviceClass {
@@ -218,8 +221,14 @@ mod tests {
 
     #[test]
     fn classification_covers_the_transports_soundy_cares_about() {
-        assert_eq!(classify(Some(TRANSPORT_BLUETOOTH), None), DeviceClass::Headphones);
-        assert_eq!(classify(Some(TRANSPORT_BLUETOOTH_LE), None), DeviceClass::Headphones);
+        assert_eq!(
+            classify(Some(TRANSPORT_BLUETOOTH), None),
+            DeviceClass::Headphones
+        );
+        assert_eq!(
+            classify(Some(TRANSPORT_BLUETOOTH_LE), None),
+            DeviceClass::Headphones
+        );
         assert_eq!(
             classify(Some(TRANSPORT_BUILT_IN), Some(SOURCE_HEADPHONES)),
             DeviceClass::Headphones
@@ -228,10 +237,19 @@ mod tests {
             classify(Some(TRANSPORT_BUILT_IN), Some(SOURCE_INTERNAL_SPEAKER)),
             DeviceClass::Speakers
         );
-        assert_eq!(classify(Some(TRANSPORT_BUILT_IN), None), DeviceClass::Unknown);
+        assert_eq!(
+            classify(Some(TRANSPORT_BUILT_IN), None),
+            DeviceClass::Unknown
+        );
         assert_eq!(classify(Some(TRANSPORT_USB), None), DeviceClass::Speakers);
-        assert_eq!(classify(Some(TRANSPORT_AIRPLAY), None), DeviceClass::Speakers);
-        assert_eq!(classify(Some(TRANSPORT_VIRTUAL), None), DeviceClass::Unknown);
+        assert_eq!(
+            classify(Some(TRANSPORT_AIRPLAY), None),
+            DeviceClass::Speakers
+        );
+        assert_eq!(
+            classify(Some(TRANSPORT_VIRTUAL), None),
+            DeviceClass::Unknown
+        );
         assert_eq!(classify(None, None), DeviceClass::Unknown);
     }
 

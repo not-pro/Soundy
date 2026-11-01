@@ -88,10 +88,10 @@ unsafe extern "system" fn keyboard_hook(code: i32, wparam: WPARAM, lparam: LPARA
                 }
             }
             // Key-up only matters for the one profile that ships a release sample.
-            WM_KEYUP | WM_SYSKEYUP => {
-                if lock(&PRESSED).up(vk) && event.flags.0 & LLKHF_INJECTED == 0 {
-                    send(Command::KeyUp { at: Instant::now() });
-                }
+            WM_KEYUP | WM_SYSKEYUP
+                if lock(&PRESSED).up(vk) && event.flags.0 & LLKHF_INJECTED == 0 =>
+            {
+                send(Command::KeyUp { at: Instant::now() });
             }
             _ => {}
         }

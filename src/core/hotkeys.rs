@@ -141,7 +141,10 @@ mod tests {
         );
         // The caller normalizes the flags; the matcher compares exactly what it gets.
         assert_eq!(state.matched_by(9, MOD_CONTROL | MOD_SHIFT | 0x8000), None);
-        assert_eq!(state.matched_by(9, MOD_CONTROL | MOD_SHIFT | 0x1000 | 0x2000 | 0x4000), None);
+        assert_eq!(
+            state.matched_by(9, MOD_CONTROL | MOD_SHIFT | 0x1000 | 0x2000 | 0x4000),
+            None
+        );
         assert_eq!(state.matched_by(10, MOD_CONTROL | MOD_SHIFT), None);
         assert_eq!(state.matched_by(9, MOD_CONTROL), None);
     }
@@ -165,6 +168,11 @@ mod tests {
         assert_eq!(restored, state);
         assert_eq!(State::load(None), State::default());
         assert_eq!(State::load(Some("not json")), State::default());
-        assert_eq!(State::load(Some("[\"7+3\",null]")).shortcuts[0].unwrap().keycode, 7);
+        assert_eq!(
+            State::load(Some("[\"7+3\",null]")).shortcuts[0]
+                .unwrap()
+                .keycode,
+            7
+        );
     }
 }

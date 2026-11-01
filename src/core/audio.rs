@@ -55,9 +55,17 @@ impl Default for Controls {
 }
 
 pub enum Command {
-    Key { keycode: u16, at: Instant },
-    KeyUp { at: Instant },
-    Mouse { right: bool, at: Instant },
+    Key {
+        keycode: u16,
+        at: Instant,
+    },
+    KeyUp {
+        at: Instant,
+    },
+    Mouse {
+        right: bool,
+        at: Instant,
+    },
     Preview,
     PreviewMouse,
     ProfilesChanged,
@@ -119,7 +127,8 @@ impl Worker {
                                 sounding && !controls.keyboard_off.load(Ordering::Relaxed);
                             let index = match command {
                                 Some(Command::Key { keycode, at })
-                                    if at.elapsed() < Duration::from_millis(100) && keys_allowed =>
+                                    if at.elapsed() < Duration::from_millis(100)
+                                        && keys_allowed =>
                                 {
                                     profile.sample_index(keycode).map(|index| {
                                         let pan = controls
@@ -130,7 +139,8 @@ impl Worker {
                                     })
                                 }
                                 Some(Command::KeyUp { at })
-                                    if at.elapsed() < Duration::from_millis(100) && keys_allowed =>
+                                    if at.elapsed() < Duration::from_millis(100)
+                                        && keys_allowed =>
                                 {
                                     profile.release_index().map(|index| (index, None))
                                 }

@@ -3,10 +3,7 @@ use std::{
     fs::File,
     os::fd::AsRawFd,
     path::{Path, PathBuf},
-    sync::{
-        Arc, Mutex, OnceLock,
-        atomic::Ordering,
-    },
+    sync::{Arc, Mutex, OnceLock, atomic::Ordering},
 };
 
 use objc2::{
@@ -17,8 +14,9 @@ use objc2::{
 };
 use objc2_app_kit::{
     NSAccessibility, NSAlert, NSApplication, NSApplicationActivationPolicy, NSApplicationDelegate,
-    NSButton, NSImage, NSMenu, NSMenuDelegate, NSMenuItem, NSPopUpButton, NSPopover, NSRunningApplication,
-    NSSlider, NSStatusBar, NSStatusItem, NSVisualEffectView, NSWindow, NSWindowDelegate, NSWorkspace,
+    NSButton, NSImage, NSMenu, NSMenuDelegate, NSMenuItem, NSPopUpButton, NSPopover,
+    NSRunningApplication, NSSlider, NSStatusBar, NSStatusItem, NSVisualEffectView, NSWindow,
+    NSWindowDelegate, NSWorkspace,
 };
 use objc2_core_graphics::{CGPreflightListenEventAccess, CGRequestListenEventAccess};
 use objc2_foundation::{
@@ -34,9 +32,7 @@ use crate::{
         hotkeys::{self, Action as HotkeyAction, State as HotkeyState},
         i18n::{Language, Text},
         input::InputTap,
-        login,
-        perapp,
-        routes,
+        login, perapp, routes,
         update::Updater,
     },
 };
@@ -718,7 +714,10 @@ impl Delegate {
     fn bump_volume(&self, delta: i16) {
         let current = self.ivars().controls.volume.load(Ordering::Relaxed) as i16;
         let volume = (current + delta).clamp(0, 100) as u8;
-        self.ivars().controls.volume.store(volume, Ordering::Relaxed);
+        self.ivars()
+            .controls
+            .volume
+            .store(volume, Ordering::Relaxed);
         self.ivars()
             .defaults
             .setInteger_forKey(volume.into(), ns_string!("volume"));
@@ -760,9 +759,8 @@ impl Delegate {
         let mut map = self.ivars().overrides.borrow_mut();
         let existing = map.get(&frontmost).copied();
         let entry = perapp::Override {
-            keyboard: keyboard.unwrap_or_else(|| {
-                existing.map_or(global_keyboard as i16, |over| over.keyboard)
-            }),
+            keyboard: keyboard
+                .unwrap_or_else(|| existing.map_or(global_keyboard as i16, |over| over.keyboard)),
             mouse: mouse.unwrap_or_else(|| existing.map_or(global_mouse, |over| over.mouse)),
         };
         map.insert(frontmost, entry);
@@ -819,10 +817,10 @@ impl Delegate {
         let class = routes::current_output_class();
         self.ivars().output_class.set(class);
         let mode = self.ivars().route_mode.get();
-        self.ivars().controls.route_allows.store(
-            mode.allows(class),
-            Ordering::Relaxed,
-        );
+        self.ivars()
+            .controls
+            .route_allows
+            .store(mode.allows(class), Ordering::Relaxed);
     }
 
     fn restart_audio(&self) {
@@ -833,7 +831,11 @@ impl Delegate {
 
     fn shortcut_title(&self, action: HotkeyAction) -> String {
         let language = self.ivars().language.get();
-        let state = self.ivars().hotkeys.lock().expect("hotkey state not poisoned");
+        let state = self
+            .ivars()
+            .hotkeys
+            .lock()
+            .expect("hotkey state not poisoned");
         if state.recording == Some(action) {
             return language.text(Text::PressKeys).into();
         }
@@ -898,13 +900,18 @@ impl Delegate {
                 Ordering::Relaxed,
             );
         }
-        if defaults.objectForKey(ns_string!("stereoKeyPosition")).is_some() {
+        if defaults
+            .objectForKey(ns_string!("stereoKeyPosition"))
+            .is_some()
+        {
             controls.stereo_pan.store(
                 defaults.boolForKey(ns_string!("stereoKeyPosition")),
                 Ordering::Relaxed,
             );
         }
-        let route_mode = routes::Mode::from_index(defaults.integerForKey(ns_string!("audioRoute")).max(0) as usize);
+        let route_mode = routes::Mode::from_index(
+            defaults.integerForKey(ns_string!("audioRoute")).max(0) as usize,
+        );
         let output_class = routes::current_output_class();
         controls
             .route_allows
@@ -1130,9 +1137,7 @@ impl Delegate {
         };
         self.item(
             &route_menu,
-            &language
-                .text(Text::OutputLine)
-                .replace("{device}", device),
+            &language.text(Text::OutputLine).replace("{device}", device),
             None,
             0,
             false,
@@ -1365,16 +1370,72 @@ extern "C" fn output_device_changed(
 /// Key names for shortcut display; unknown codes keep their number.
 fn key_label(keycode: u16) -> String {
     const NAMES: &[(u16, &str)] = &[
-        (0, "A"), (1, "S"), (2, "D"), (3, "F"), (4, "H"), (5, "G"), (6, "Z"), (7, "X"),
-        (8, "C"), (9, "V"), (11, "B"), (12, "Q"), (13, "W"), (14, "E"), (15, "R"),
-        (16, "Y"), (17, "T"), (18, "1"), (19, "2"), (20, "3"), (21, "4"), (22, "6"),
-        (23, "5"), (24, "="), (25, "9"), (26, "7"), (27, "-"), (28, "8"), (29, "0"),
-        (30, "]"), (31, "O"), (32, "U"), (33, "["), (34, "I"), (35, "P"), (36, "↩"),
-        (37, "L"), (38, "J"), (39, ";"), (40, "K"), (41, "'"), (42, "\\"), (43, ","),
-        (44, "/"), (45, "N"), (46, "M"), (47, "."), (48, "Tab"), (49, "Space"),
-        (50, "`"), (51, "⌫"), (53, "Esc"), (57, "Caps"), (76, "⌤"),
-        (96, "F5"), (97, "F6"), (98, "F7"), (99, "F3"), (100, "F8"), (101, "F9"),
-        (103, "F11"), (109, "F10"), (111, "F12"), (118, "F4"), (120, "F2"), (122, "F1"),
+        (0, "A"),
+        (1, "S"),
+        (2, "D"),
+        (3, "F"),
+        (4, "H"),
+        (5, "G"),
+        (6, "Z"),
+        (7, "X"),
+        (8, "C"),
+        (9, "V"),
+        (11, "B"),
+        (12, "Q"),
+        (13, "W"),
+        (14, "E"),
+        (15, "R"),
+        (16, "Y"),
+        (17, "T"),
+        (18, "1"),
+        (19, "2"),
+        (20, "3"),
+        (21, "4"),
+        (22, "6"),
+        (23, "5"),
+        (24, "="),
+        (25, "9"),
+        (26, "7"),
+        (27, "-"),
+        (28, "8"),
+        (29, "0"),
+        (30, "]"),
+        (31, "O"),
+        (32, "U"),
+        (33, "["),
+        (34, "I"),
+        (35, "P"),
+        (36, "↩"),
+        (37, "L"),
+        (38, "J"),
+        (39, ";"),
+        (40, "K"),
+        (41, "'"),
+        (42, "\\"),
+        (43, ","),
+        (44, "/"),
+        (45, "N"),
+        (46, "M"),
+        (47, "."),
+        (48, "Tab"),
+        (49, "Space"),
+        (50, "`"),
+        (51, "⌫"),
+        (53, "Esc"),
+        (57, "Caps"),
+        (76, "⌤"),
+        (96, "F5"),
+        (97, "F6"),
+        (98, "F7"),
+        (99, "F3"),
+        (100, "F8"),
+        (101, "F9"),
+        (103, "F11"),
+        (109, "F10"),
+        (111, "F12"),
+        (118, "F4"),
+        (120, "F2"),
+        (122, "F1"),
     ];
     NAMES
         .iter()
