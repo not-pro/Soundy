@@ -6,11 +6,12 @@ rust-version = "1.85"
 description = "Keyboard and mouse sounds for macOS and Windows"
 
 [dependencies]
+serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6.3"
-objc2-foundation = { version = "0.3.2", default-features = false, features = ["std", "NSObject", "NSString", "NSURL", "NSUserDefaults", "NSNotification", "NSTimer", "NSLocale", "NSArray", "NSError", "NSBundle"] }
+objc2-foundation = { version = "0.3.2", default-features = false, features = ["std", "NSObject", "NSString", "NSURL", "NSUserDefaults", "NSNotification", "NSDictionary", "NSTimer", "NSLocale", "NSArray", "NSError", "NSBundle"] }
 objc2-app-kit = { version = "0.3.2", default-features = false, features = ["std", "NSApplication", "NSRunningApplication", "NSMenu", "NSMenuItem", "NSCell", "NSStatusBar", "NSStatusItem", "NSStatusBarButton", "NSButton", "NSButtonCell", "NSControl", "NSResponder", "NSView", "NSAlert", "NSWorkspace", "NSImage", "NSAccessibilityProtocols", "NSWindow", "NSWindowRestoration", "NSGraphics", "NSVisualEffectView", "NSPopUpButton", "NSPopUpButtonCell", "NSMenuItemCell", "NSTextField", "NSFont", "NSColor", "NSBezierPath", "NSImageView", "NSAppearance", "NSSlider", "NSSliderCell", "NSActionCell", "NSText", "NSAccessibilityConstants", "NSPopover", "NSViewController", "objc2-core-foundation"] }
 objc2-avf-audio = { version = "0.3.2", default-features = false, features = ["std", "AVAudioEngine", "AVAudioNode", "AVAudioIONode", "AVAudioMixerNode", "AVAudioFile", "AVAudioBuffer", "AVAudioPlayerNode", "AVAudioMixing", "AVAudioFormat", "AVAudioTime", "AVAudioTypes", "AVAudioUnit", "AVAudioUnitEffect", "objc2-audio-toolbox", "block2"] }
 objc2-core-graphics = { version = "0.3.2", default-features = false, features = ["std", "CGEvent", "CGEventTypes"] }

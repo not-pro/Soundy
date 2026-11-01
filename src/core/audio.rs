@@ -2,7 +2,7 @@ use std::{
     path::Path,
     sync::{
         Arc,
-        atomic::{AtomicU8, Ordering},
+        atomic::{AtomicBool, AtomicU8, Ordering},
         mpsc::{self, RecvTimeoutError, SyncSender},
     },
     thread::{self, JoinHandle},
@@ -16,20 +16,28 @@ use objc2::{
 use objc2_audio_toolbox::AudioComponentDescription;
 use objc2_avf_audio::{
     AVAudioEngine, AVAudioFile, AVAudioMixing, AVAudioPCMBuffer, AVAudioPlayerNode,
-    AVAudioPlayerNodeBufferOptions, AVAudioUnitEffect,
+    AVAudioPlayerNodeBufferOptions, AVAudioStereoMixing, AVAudioUnitEffect,
 };
 use objc2_foundation::{NSString, NSURL};
 
 use crate::core::{
     catalog::{self, MouseProfile, Profile},
     i18n::{Language, Text},
-    variation,
+    pan, variation,
 };
 
 pub struct Controls {
     pub profile: AtomicU8,
     pub mouse_profile: AtomicU8,
     pub volume: AtomicU8,
+    /// Global power switch; hotkeys keep working while this is off.
+    pub enabled: AtomicBool,
+    /// Per-app "no keyboard sound" override.
+    pub keyboard_off: AtomicBool,
+    /// Stereo Key Position: pan keys to their physical spots.
+    pub stereo_pan: AtomicBool,
+    /// Audio-route gating (headphones/speakers mode).
+    pub route_allows: AtomicBool,
 }
 
 impl Default for Controls {
@@ -38,6 +46,10 @@ impl Default for Controls {
             profile: AtomicU8::new(0),
             mouse_profile: AtomicU8::new(0),
             volume: AtomicU8::new(25),
+            enabled: AtomicBool::new(true),
+            keyboard_off: AtomicBool::new(false),
+            stereo_pan: AtomicBool::new(false),
+            route_allows: AtomicBool::new(true),
         }
     }
 }
@@ -49,6 +61,8 @@ pub enum Command {
     Preview,
     PreviewMouse,
     ProfilesChanged,
+    /// Restart the engine after sleep or an output-device change.
+    ResetAudio,
     Stop,
 }
 
@@ -99,28 +113,48 @@ impl Worker {
                                 audio.evict_expired(now);
                                 next_cleanup = now + CACHE_SWEEP_INTERVAL;
                             }
+                            let sounding = controls.enabled.load(Ordering::Relaxed)
+                                && controls.route_allows.load(Ordering::Relaxed);
+                            let keys_allowed =
+                                sounding && !controls.keyboard_off.load(Ordering::Relaxed);
                             let index = match command {
                                 Some(Command::Key { keycode, at })
-                                    if at.elapsed() < Duration::from_millis(100) =>
+                                    if at.elapsed() < Duration::from_millis(100) && keys_allowed =>
                                 {
-                                    profile.sample_index(keycode)
+                                    profile.sample_index(keycode).map(|index| {
+                                        let pan = controls
+                                            .stereo_pan
+                                            .load(Ordering::Relaxed)
+                                            .then(|| pan::key_pan(keycode));
+                                        (index, pan)
+                                    })
                                 }
                                 Some(Command::KeyUp { at })
-                                    if at.elapsed() < Duration::from_millis(100) =>
+                                    if at.elapsed() < Duration::from_millis(100) && keys_allowed =>
                                 {
-                                    profile.release_index()
+                                    profile.release_index().map(|index| (index, None))
                                 }
                                 Some(Command::Mouse { right, at })
-                                    if at.elapsed() < Duration::from_millis(100) =>
+                                    if at.elapsed() < Duration::from_millis(100) && sounding =>
                                 {
-                                    mouse.sample_index(right)
+                                    mouse.sample_index(right).map(|index| (index, None))
                                 }
-                                Some(Command::Preview) => profile.sample_index(0),
-                                Some(Command::PreviewMouse) => mouse.sample_index(false),
+                                Some(Command::Preview) => {
+                                    profile.sample_index(0).map(|index| (index, None))
+                                }
+                                Some(Command::PreviewMouse) => {
+                                    mouse.sample_index(false).map(|index| (index, None))
+                                }
+                                Some(Command::ResetAudio) => {
+                                    if let Err(error) = audio.restart(language) {
+                                        eprintln!("Soundy: {error}");
+                                    }
+                                    None
+                                }
                                 _ => None,
                             };
-                            if let Some(index) = index {
-                                audio.play(index, controls.volume.load(Ordering::Relaxed));
+                            if let Some((index, pan)) = index {
+                                audio.play(index, controls.volume.load(Ordering::Relaxed), pan);
                             }
                         });
                     }
@@ -366,7 +400,14 @@ impl Player {
             .map_err(|e| format!("{}: {e}", language.text(Text::AudioOutputFailed)))
     }
 
-    fn play(&mut self, index: usize, volume: u8) {
+    /// Stops and restarts the engine; used after sleep and output changes,
+    /// when the render chain can come back in a broken state.
+    fn restart(&mut self, language: Language) -> Result<(), String> {
+        unsafe { self.engine.stop() };
+        self.start(language)
+    }
+
+    fn play(&mut self, index: usize, volume: u8, pan: Option<f32>) {
         if volume == 0 {
             return;
         }
@@ -402,6 +443,10 @@ impl Player {
         voice.buffer = pitched;
         let buffer = voice.buffer.as_deref().unwrap_or(&sample.buffer);
         unsafe {
+            if let Some(pan) = pan {
+                // AVAudioMixing: Stereo Key Position, center when disabled.
+                voice.node.setPan(pan);
+            }
             // Interrupt a stolen voice instead of appending to its queue.
             let options = if voice.busy_until > now {
                 AVAudioPlayerNodeBufferOptions::Interrupts

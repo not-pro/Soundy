@@ -36,6 +36,11 @@ text_keys! {
     AudioOutputFailed, PathUtf8Required, InvalidAudioFormat, WavTooLarge,
     AudioBufferFailed, IncompleteWav, InvalidSoundFile, SoundsPathRequired,
     UnknownArgument, Help,
+    Enabled, ForApp, UseGlobal, NoKeyboardSound, StereoKeyPosition,
+    PlayThrough, RouteAlways, RouteHeadphones, RouteSpeakers, OutputLine,
+    OutputHeadphones, OutputSpeakers, OutputUnknown, Shortcuts, PressKeys,
+    NoShortcut, ActionPower, ActionVolumeUp, ActionVolumeDown,
+    ActionToggleApp, ResetShortcuts,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

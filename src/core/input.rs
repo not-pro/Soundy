@@ -1,5 +1,16 @@
-use std::{cell::Cell, ffi::c_void, ptr::NonNull, sync::mpsc::SyncSender, time::Instant};
+use std::{
+    cell::Cell,
+    ffi::c_void,
+    ptr::NonNull,
+    sync::{
+        Arc,
+        mpsc::SyncSender,
+        Mutex,
+    },
+    time::Instant,
+};
 
+use objc2::{msg_send, runtime::AnyObject};
 use objc2_core_foundation::{
     CFMachPort, CFRetained, CFRunLoop, CFRunLoopSource, kCFRunLoopCommonModes,
 };
@@ -7,15 +18,31 @@ use objc2_core_graphics::{
     CGEvent, CGEventField, CGEventFlags, CGEventTapLocation, CGEventTapOptions,
     CGEventTapPlacement, CGEventTapProxy, CGEventType, CGPreflightListenEventAccess,
 };
+use objc2_foundation::NSString;
 
 use crate::core::{
     audio::Command,
+    hotkeys::{self, State as HotkeyState},
     i18n::{Language, Text},
 };
 
+// CGEventFlags bits for the four standard modifiers (NX_*MASK values).
+const FLAG_SHIFT: u64 = 0x0002_0000;
+const FLAG_CONTROL: u64 = 0x0004_0000;
+const FLAG_OPTION: u64 = 0x0008_0000;
+const FLAG_COMMAND: u64 = 0x0010_0000;
+
 struct Context {
     sender: SyncSender<Command>,
+    hotkeys: Arc<Mutex<HotkeyState>>,
+    // The UI delegate handles hotkey actions and recording completion. It
+    // outlives this tap: teardown happens in the delegate's terminate path on
+    // the same main run loop that delivers these callbacks.
+    delegate: *const AnyObject,
     port: Cell<Option<NonNull<CFMachPort>>>,
+    /// A KeyDown consumed by a hotkey, waiting for its KeyUp so a release
+    /// sample never answers a shortcut.
+    hotkey_armed: Cell<Option<u16>>,
 }
 
 pub struct InputTap {
@@ -26,13 +53,21 @@ pub struct InputTap {
 }
 
 impl InputTap {
-    pub fn start(sender: SyncSender<Command>, language: Language) -> Result<Self, String> {
+    pub fn start(
+        sender: SyncSender<Command>,
+        language: Language,
+        hotkeys: Arc<Mutex<HotkeyState>>,
+        delegate: &AnyObject,
+    ) -> Result<Self, String> {
         if !CGPreflightListenEventAccess() {
             return Err(language.text(Text::InputPermissionRequired).into());
         }
         let mut context = Box::new(Context {
             sender,
+            hotkeys,
+            delegate,
             port: Cell::new(None),
+            hotkey_armed: Cell::new(None),
         });
         // SAFETY: Listen-only tap never changes input. Box is retained for the tap's lifetime;
         // callbacks and teardown both run on the main run loop, without concurrent access.
@@ -109,6 +144,11 @@ unsafe extern "C-unwind" fn callback(
             let keycode =
                 CGEvent::integer_value_field(event_ref, CGEventField::KeyboardEventKeycode);
             if let Ok(keycode) = u16::try_from(keycode) {
+                if event_type == CGEventType::KeyDown {
+                    if handle_hotkey(context, keycode, event_ref) {
+                        return event.as_ptr();
+                    }
+                }
                 if key_pressed(event_type, keycode, CGEvent::flags(event_ref)) {
                     // A full queue drops a sound, never stalls keyboard input.
                     let _ = context.sender.try_send(Command::Key {
@@ -119,9 +159,19 @@ unsafe extern "C-unwind" fn callback(
             }
         }
     } else if event_type == CGEventType::KeyUp {
-        let _ = context
-            .sender
-            .try_send(Command::KeyUp { at: Instant::now() });
+        let event_ref = Some(unsafe { event.as_ref() });
+        let keycode = CGEvent::integer_value_field(event_ref, CGEventField::KeyboardEventKeycode);
+        // Swallow the release of a key that triggered a hotkey, so a release
+        // sample never answers a shortcut.
+        let consumed = u16::try_from(keycode)
+            .ok()
+            .filter(|code| context.hotkey_armed.get() == Some(*code))
+            .map(|_| context.hotkey_armed.take());
+        if consumed.is_none() {
+            let _ = context
+                .sender
+                .try_send(Command::KeyUp { at: Instant::now() });
+        }
     } else if let Some(right) = mouse_clicked(event_type) {
         let _ = context.sender.try_send(Command::Mouse {
             right,
@@ -129,6 +179,51 @@ unsafe extern "C-unwind" fn callback(
         });
     }
     event.as_ptr()
+}
+
+/// Normalized four-standard-modifier mask for the hotkey matcher.
+fn normalized_modifiers(flags: CGEventFlags) -> u16 {
+    let bits = flags.bits();
+    (u16::from(bits & FLAG_CONTROL != 0) << 0)
+        | (u16::from(bits & FLAG_OPTION != 0) << 1)
+        | (u16::from(bits & FLAG_SHIFT != 0) << 2)
+        | (u16::from(bits & FLAG_COMMAND != 0) << 3)
+}
+
+/// Handles a KeyDown against the hotkey table and recording state. Returns
+/// true when the event was consumed by a shortcut or by recording, so no key
+/// sound (and no further hotkey processing) happens for it.
+fn handle_hotkey(context: &Context, keycode: u16, event: Option<&CGEvent>) -> bool {
+    let modifiers = normalized_modifiers(CGEvent::flags(event));
+    let mut state = context.hotkeys.lock().expect("hotkey state not poisoned");
+    if let Some(action) = state.recording {
+        state.recording = None;
+        // Escape with no modifiers cancels instead of recording.
+        let combo = (keycode != hotkeys::Shortcut::ESCAPE || modifiers != 0)
+            .then(|| NSString::from_str(&hotkeys::Shortcut { keycode, modifiers }.encode()));
+        drop(state);
+        // SAFETY: the delegate outlives the tap (see Context); the callback runs
+        // on the main run loop, the delegate's own thread.
+        unsafe {
+            let _: () = msg_send![
+                context.delegate,
+                recordShortcut: combo.as_deref(),
+                forAction: action.slot() as isize
+            ];
+        }
+        return true;
+    }
+    let matched = state.matched_by(keycode, modifiers);
+    drop(state);
+    if let Some(action) = matched {
+        context.hotkey_armed.set(Some(keycode));
+        // SAFETY: same lifetime and threading guarantees as recording above.
+        unsafe {
+            let _: () = msg_send![context.delegate, handleHotkey: action.slot() as isize];
+        }
+        return true;
+    }
+    false
 }
 
 fn key_pressed(kind: CGEventType, keycode: u16, flags: CGEventFlags) -> bool {

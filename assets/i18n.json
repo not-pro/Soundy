@@ -223,5 +223,110 @@
     "en": "Soundy — keyboard and mouse sounds for macOS and Windows\n\n  --sounds-dir PATH  Custom WAV directory (bundled sounds by default)\n  --check            Validate 240 WAV files without audio or input monitoring\n  --preview          Play one keyboard sound and exit\n  --preview-mouse    Play one mouse click and exit\n  --version          Version\n",
     "ru": "Soundy — звуки клавиатуры и мыши для macOS и Windows\n\n  --sounds-dir PATH  Свой каталог WAV (по умолчанию встроенные звуки)\n  --check            Проверить 240 WAV без звука и мониторинга ввода\n  --preview          Воспроизвести один звук и завершить работу\n  --preview-mouse    Воспроизвести клик мыши и завершить работу\n  --version          Версия\n",
     "zh-Hans": "Soundy — macOS 和 Windows 键盘和鼠标音效\n\n  --sounds-dir PATH  自定义 WAV 目录（默认使用内置音效）\n  --check            检查 240 个 WAV 文件，不播放声音或监控输入\n  --preview          播放一个键盘音效后退出\n  --preview-mouse    播放一次鼠标点击音效后退出\n  --version          版本\n"
+  },
+  "Enabled": {
+    "en": "Enabled",
+    "ru": "Включено",
+    "zh-Hans": "已启用"
+  },
+  "ForApp": {
+    "en": "For {app}",
+    "ru": "Для: {app}",
+    "zh-Hans": "{app} 的音效"
+  },
+  "UseGlobal": {
+    "en": "Use Global Profiles",
+    "ru": "Глобальные профили",
+    "zh-Hans": "使用全局配置"
+  },
+  "NoKeyboardSound": {
+    "en": "No Keyboard Sound",
+    "ru": "Без звука клавиатуры",
+    "zh-Hans": "关闭键盘音效"
+  },
+  "StereoKeyPosition": {
+    "en": "Stereo Key Position",
+    "ru": "Стереопозиция клавиш",
+    "zh-Hans": "按键立体声定位"
+  },
+  "PlayThrough": {
+    "en": "Play Through",
+    "ru": "Воспроизводить через",
+    "zh-Hans": "播放设备"
+  },
+  "RouteAlways": {
+    "en": "Always",
+    "ru": "Всегда",
+    "zh-Hans": "始终"
+  },
+  "RouteHeadphones": {
+    "en": "Headphones Only",
+    "ru": "Только наушники",
+    "zh-Hans": "仅耳机"
+  },
+  "RouteSpeakers": {
+    "en": "Speakers Only",
+    "ru": "Только динамики",
+    "zh-Hans": "仅扬声器"
+  },
+  "OutputLine": {
+    "en": "Output: {device}",
+    "ru": "Устройство: {device}",
+    "zh-Hans": "输出设备：{device}"
+  },
+  "OutputHeadphones": {
+    "en": "Headphones",
+    "ru": "Наушники",
+    "zh-Hans": "耳机"
+  },
+  "OutputSpeakers": {
+    "en": "Speakers",
+    "ru": "Динамики",
+    "zh-Hans": "扬声器"
+  },
+  "OutputUnknown": {
+    "en": "Unknown",
+    "ru": "Неизвестно",
+    "zh-Hans": "未知"
+  },
+  "Shortcuts": {
+    "en": "Shortcuts",
+    "ru": "Горячие клавиши",
+    "zh-Hans": "快捷键"
+  },
+  "PressKeys": {
+    "en": "Press keys… (Esc cancels)",
+    "ru": "Нажмите клавиши… (Esc — отмена)",
+    "zh-Hans": "请按组合键…（Esc 取消）"
+  },
+  "NoShortcut": {
+    "en": "—",
+    "ru": "—",
+    "zh-Hans": "—"
+  },
+  "ActionPower": {
+    "en": "Sound On/Off",
+    "ru": "Звук вкл/выкл",
+    "zh-Hans": "声音开/关"
+  },
+  "ActionVolumeUp": {
+    "en": "Volume Up",
+    "ru": "Громкость +",
+    "zh-Hans": "增大音量"
+  },
+  "ActionVolumeDown": {
+    "en": "Volume Down",
+    "ru": "Громкость −",
+    "zh-Hans": "减小音量"
+  },
+  "ActionToggleApp": {
+    "en": "Current App Sound",
+    "ru": "Звук текущего приложения",
+    "zh-Hans": "当前应用声音"
+  },
+  "ResetShortcuts": {
+    "en": "Reset Shortcuts",
+    "ru": "Сбросить горячие клавиши",
+    "zh-Hans": "重置快捷键"
   }
 }

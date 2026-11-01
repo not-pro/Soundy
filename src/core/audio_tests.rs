@@ -16,7 +16,7 @@ fn running_engine_accepts_new_profile_formats_and_schedules_playback() {
                 .into_iter()
                 .flatten()
             {
-                player.play(index, 1);
+                player.play(index, 1, None);
                 let sample = player.samples[index].as_ref().unwrap();
                 assert!(sample.last_play.is_some());
                 assert!(sample.last_variant.is_some(), "every press picks a variant");
@@ -27,7 +27,7 @@ fn running_engine_accepts_new_profile_formats_and_schedules_playback() {
                 .into_iter()
                 .chain(mouse.sample_indices())
             {
-                player.play(index, 25);
+                player.play(index, 25, None);
                 assert!(player.samples[index].as_ref().unwrap().last_play.is_some());
             }
         }
@@ -161,7 +161,7 @@ fn pitched_variant_buffers_are_released_once_the_voice_goes_idle() {
         // Force a pitched variant: the picker never repeats the last variant index,
         // and RATIOS[2] is 1.0, so any other index resamples the buffer.
         player.samples[index].as_mut().unwrap().last_variant = Some(2);
-        player.play(index, 50);
+        player.play(index, 50, None);
         let with_buffer = player
             .pools
             .iter()
