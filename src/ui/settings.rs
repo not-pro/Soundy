@@ -13,6 +13,7 @@ use objc2_foundation::{
 use crate::{
     consts,
     core::i18n::{Language, Text},
+    view_model::{LoginStatus, ViewModel},
 };
 
 const STATUS_TAG: isize = 101;
@@ -123,18 +124,21 @@ pub fn populate(
     window: &NSWindow,
     menu: &NSMenu,
     target: &AnyObject,
-    language: Language,
-    volume: u8,
+    view_model: &ViewModel,
     listening: bool,
 ) {
     let mtm = window.mtm();
+    let language = view_model.language();
     let login = menu
         .itemWithTitle(&NSString::from_str(language.text(Text::LaunchAtLogin)))
         .unwrap();
     let bounds = rect(0.0, 0.0, 240.0, 240.0);
     let view = Glass::alloc(mtm).set_ivars(GlassState {
         language,
-        login: login.state() == 1,
+        login: matches!(
+            view_model.login_status(),
+            LoginStatus::Enabled | LoginStatus::RequiresApproval
+        ),
     });
     let view: Retained<Glass> = unsafe { msg_send![super(view), initWithFrame: bounds] };
     symbol_button(
@@ -207,7 +211,7 @@ pub fn populate(
     );
     let percentage = label(
         &view,
-        &format!("{volume}%"),
+        &format!("{}%", view_model.volume()),
         rect(180.0, 109.0, 44.0, 17.0),
         11.0,
     );
@@ -219,7 +223,7 @@ pub fn populate(
     slider.setCell(Some(&cell));
     slider.setMinValue(0.0);
     slider.setMaxValue(100.0);
-    slider.setDoubleValue(volume.into());
+    slider.setDoubleValue(view_model.volume().into());
     slider.setContinuous(true);
     slider.setAccessibilityLabel(Some(&NSString::from_str(language.text(Text::Volume))));
     unsafe {
@@ -307,7 +311,7 @@ pub fn populate(
         sel!(showAbout:),
     );
     window.setContentView(Some(&view));
-    sync_volume(window, language, volume);
+    sync_volume(window, view_model);
 }
 
 pub fn content(window: &NSWindow) -> Retained<NSView> {
@@ -319,7 +323,9 @@ pub fn content(window: &NSWindow) -> Retained<NSView> {
 }
 
 // Updating the existing labels keeps the native slider tracking during a drag.
-pub fn sync_volume(window: &NSWindow, language: Language, volume: u8) {
+pub fn sync_volume(window: &NSWindow, view_model: &ViewModel) {
+    let language = view_model.language();
+    let volume = view_model.volume();
     let root = content(window);
     for view in root.subviews() {
         if let Ok(label) = view.downcast::<NSTextField>() {
@@ -348,19 +354,16 @@ pub fn about(
     sender: &NSButton,
     target: &AnyObject,
     menu: &NSMenu,
-    language: Language,
+    view_model: &ViewModel,
 ) -> Retained<NSPopover> {
     let mtm = sender.mtm();
+    let language = view_model.language();
     let extra: Vec<_> = menu.itemArray().iter().enumerate().filter(|(_, item)| matches!(item.action(), Some(action) if action == sel!(approveLogin:) || action == sel!(installUpdate:))).collect();
     let height = 112.0 + extra.len() as f64 * 24.0;
     let view = NSView::initWithFrame(NSView::alloc(mtm), rect(0.0, 0.0, 180.0, height));
     label(
         &view,
-        &format!(
-            "{} {}",
-            language.text(Text::Version),
-            env!("CARGO_PKG_VERSION")
-        ),
+        &view_model.version_string(),
         rect(12.0, height - 26.0, 156.0, 16.0),
         10.0,
     );

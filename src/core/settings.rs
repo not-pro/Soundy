@@ -19,6 +19,7 @@ pub struct Config {
     pub volume: u8,
     pub language: Language,
     pub launch_at_login: bool,
+    pub enabled: bool,
 }
 
 impl Default for Config {
@@ -29,6 +30,7 @@ impl Default for Config {
             volume: 25,
             language: system_language(),
             launch_at_login: false,
+            enabled: true,
         }
     }
 }
@@ -63,6 +65,7 @@ impl Config {
             config.language = Language::from_code(code).unwrap_or(config.language);
         }
         config.launch_at_login = value["launchAtLogin"].as_bool().unwrap_or(false);
+        config.enabled = value["enabled"].as_bool().unwrap_or(true);
         config
     }
 
@@ -73,6 +76,7 @@ impl Config {
             "volume": self.volume,
             "language": self.language.code(),
             "launchAtLogin": self.launch_at_login,
+            "enabled": self.enabled,
         })
         .to_string()
     }
@@ -110,16 +114,18 @@ mod tests {
             volume: 75,
             language: Language::Chinese,
             launch_at_login: true,
+            enabled: false,
         };
         assert_eq!(Config::from_json(&config.to_json()), config);
         let fallback = Config::from_json(
-            r#"{"profile": 900, "mouseProfile": 900, "volume": 900, "language": "xx", "launchAtLogin": "yes"}"#,
+            r#"{"profile": 900, "mouseProfile": 900, "volume": 900, "language": "xx", "launchAtLogin": "yes", "enabled": "yes"}"#,
         );
         assert_eq!(fallback.profile, 0);
         assert_eq!(fallback.mouse_profile, 0);
         assert_eq!(fallback.volume, 100);
         assert_eq!(fallback.language, Config::default().language);
         assert!(!fallback.launch_at_login);
+        assert!(fallback.enabled);
         assert_eq!(Config::from_json("not json"), Config::default());
     }
 }

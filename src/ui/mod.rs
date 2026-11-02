@@ -1,9 +1,9 @@
 use std::{
-    cell::{Cell, OnceCell, RefCell},
+    cell::{OnceCell, RefCell},
     fs::File,
     os::fd::AsRawFd,
     path::{Path, PathBuf},
-    sync::{Arc, Mutex, OnceLock, atomic::Ordering},
+    sync::{Arc, OnceLock},
 };
 
 use objc2::{
@@ -27,39 +27,27 @@ use objc2_foundation::{
 use crate::{
     consts,
     core::{
-        audio::{Command, Controls, Worker},
+        audio::{Controls, Worker},
         catalog::{MouseProfile, Profile},
-        hotkeys::{self, Action as HotkeyAction, State as HotkeyState},
+        hotkeys::{Action as HotkeyAction, Shortcut},
         i18n::{Language, Text},
         input::InputTap,
-        login, perapp, routes,
+        login, routes,
         update::Updater,
     },
+    view_model::{self, InputStatus, LoginStatus, ViewModel},
 };
 
 mod settings;
 
 struct State {
+    view_model: ViewModel,
     window: RefCell<Option<Retained<NSWindow>>>,
     about: RefCell<Option<Retained<NSPopover>>>,
-    controls: Arc<Controls>,
-    language: Cell<Language>,
-    worker: RefCell<Option<Worker>>,
     tap: RefCell<Option<InputTap>>,
     status: OnceCell<Retained<NSStatusItem>>,
     menu: OnceCell<Retained<NSMenu>>,
-    defaults: Retained<NSUserDefaults>,
-    smoke_test: bool,
     updater: OnceCell<Updater>,
-    update_version: RefCell<Option<String>>,
-    update_probe_finished: Cell<bool>,
-    hotkeys: Arc<Mutex<HotkeyState>>,
-    /// The user's global profile choice; per-app overrides layer on top.
-    global: Cell<(u8, u8)>,
-    overrides: RefCell<perapp::Map>,
-    frontmost: RefCell<Option<String>>,
-    route_mode: Cell<routes::Mode>,
-    output_class: Cell<routes::DeviceClass>,
     route_listener: RefCell<Option<routes::OutputListener>>,
 }
 
@@ -79,14 +67,14 @@ define_class!(
             // Version 2 settings: per-app overrides, hotkeys, routes. The v1 keys
             // keep their meaning, so loading stays valid and nothing migrates.
             self.ivars()
-                .defaults
-                .setInteger_forKey(2, ns_string!("schemaVersion"));
+                .view_model
+                .persistence()
+                .set_schema_version(2);
             if let Some(app) = NSWorkspace::sharedWorkspace().frontmostApplication() {
-                *self.ivars().frontmost.borrow_mut() =
-                    app.bundleIdentifier().map(|bundle| bundle.to_string());
+                self.ivars()
+                    .view_model
+                    .set_frontmost_app(app.bundleIdentifier().map(|bundle| bundle.to_string()));
             }
-            self.apply_profiles();
-            self.update_output_route();
             let center = NSWorkspace::sharedWorkspace().notificationCenter();
             for name in [
                 ns_string!("NSWorkspaceDidActivateApplicationNotification"),
@@ -122,23 +110,23 @@ define_class!(
                 image.setTemplate(true);
                 button.setImage(Some(&image));
                 button.setAccessibilityLabel(Some(ns_string!("Soundy")));
-                button.setToolTip(Some(&NSString::from_str(self.ivars().language.get().text(Text::Tooltip))));
+                button.setToolTip(Some(&NSString::from_str(self.ivars().view_model.language().text(Text::Tooltip))));
             }
             status.setMenu(Some(&menu));
             let _ = self.ivars().status.set(status);
             let _ = self.ivars().menu.set(menu);
             self.refresh();
             // Alternate feeds are accepted only by the explicit smoke-test mode.
-            let test_feed = if self.ivars().smoke_test {
+            let test_feed = if self.ivars().view_model.smoke_test() {
                 std::env::var("SOUNDY_UPDATE_TEST_FEED").ok()
             } else { None };
-            if !self.ivars().smoke_test || test_feed.is_some() {
+            if !self.ivars().view_model.smoke_test() || test_feed.is_some() {
                 match Updater::start(self, test_feed.as_deref()) {
                     Ok(updater) => { let _ = self.ivars().updater.set(updater); }
                     Err(error) => eprintln!("Soundy update check: {error}"),
                 }
             }
-            if self.ivars().smoke_test {
+            if self.ivars().view_model.smoke_test() {
                 // SAFETY: The target is retained by NSTimer until this one-shot invocation;
                 // smokeFinish: has the matching NSTimer action signature below.
                 unsafe {
@@ -160,7 +148,6 @@ define_class!(
             }
             self.ivars().route_listener.borrow_mut().take();
             self.ivars().tap.borrow_mut().take();
-            self.ivars().worker.borrow_mut().take();
         }
     }
 
@@ -168,6 +155,7 @@ define_class!(
         #[unsafe(method(windowWillClose:))]
         fn window_will_close(&self, _notification: &NSNotification) {
             if let Some(about) = self.ivars().about.borrow_mut().take() { about.close(); }
+            self.ivars().view_model.close_settings();
             if let Some(window) = self.ivars().window.borrow_mut().take() {
                 // Release after AppKit finishes the close event, not inside its callback.
                 let _ = Retained::autorelease_ptr(window);
@@ -188,6 +176,7 @@ define_class!(
                 let window = settings::create(self.mtm());
                 window.setDelegate(Some(ProtocolObject::from_ref(self)));
                 *self.ivars().window.borrow_mut() = Some(window);
+                self.ivars().view_model.open_settings();
                 self.refresh();
             }
             if let Some(window) = self.ivars().window.borrow().as_ref() {
@@ -203,8 +192,6 @@ define_class!(
                 match sender.tag() {
                     0 => self.select_profile(sel!(selectProfile:), &item),
                     1 => self.select_mouse(sel!(selectMouse:), &item),
-                    2 => self.select_volume(sel!(selectVolume:), &item),
-                    3 => self.select_language(sel!(selectLanguage:), &item),
                     _ => {},
                 }
             }
@@ -212,20 +199,21 @@ define_class!(
 
         #[unsafe(method(closeSettings:))]
         fn close_settings(&self, _sender: &AnyObject) {
+            self.ivars().view_model.close_settings();
             let window = self.ivars().window.borrow().clone();
             if let Some(window) = window { window.close(); }
         }
 
         #[unsafe(method(settingsPreview:))]
         fn settings_preview(&self, sender: &NSButton) {
-            if sender.tag() == 0 { self.play_preview(); } else { self.play_mouse_preview(); }
+            let view_model = &self.ivars().view_model;
+            if sender.tag() == 0 { view_model.play_preview(); } else { view_model.play_mouse_preview(); }
         }
 
         #[unsafe(method(settingsLanguage:))]
         fn settings_language(&self, sender: &NSButton) {
-            if let Some(language) = Language::ALL.get(sender.tag() as usize) {
-                self.ivars().language.set(*language);
-                language.save(&self.ivars().defaults);
+            if let Some(&language) = Language::ALL.get(sender.tag() as usize) {
+                self.ivars().view_model.select_language(language);
                 self.refresh();
             }
         }
@@ -233,10 +221,9 @@ define_class!(
         #[unsafe(method(settingsVolume:))]
         fn settings_volume(&self, sender: &NSSlider) {
             let volume = sender.doubleValue().round().clamp(0.0, 100.0) as u8;
-            self.ivars().controls.volume.store(volume, Ordering::Relaxed);
-            self.ivars().defaults.setInteger_forKey(volume.into(), ns_string!("volume"));
+            self.ivars().view_model.set_volume(volume);
             if let Some(window) = self.ivars().window.borrow().as_ref() {
-                settings::sync_volume(window, self.ivars().language.get(), volume);
+                settings::sync_volume(window, &self.ivars().view_model);
             }
         }
 
@@ -248,7 +235,8 @@ define_class!(
                 if shown { return; }
             }
             let menu = self.ivars().menu.get().unwrap();
-            *self.ivars().about.borrow_mut() = Some(settings::about(sender, self, menu, self.ivars().language.get()));
+            *self.ivars().about.borrow_mut() = Some(settings::about(sender, self, menu, &self.ivars().view_model));
+            self.ivars().view_model.set_about_open(true);
         }
 
         #[unsafe(method(openSocial:))]
@@ -274,7 +262,7 @@ define_class!(
             // SAFETY: Sparkle passes SUAppcastItem, whose displayVersionString
             // property is a non-null NSString. Delegate callbacks are main-thread.
             let version: Retained<NSString> = unsafe { msg_send![item, displayVersionString] };
-            *self.ivars().update_version.borrow_mut() = Some(version.to_string());
+            self.ivars().view_model.set_update_version(Some(version.to_string()));
             self.refresh();
         }
 
@@ -287,7 +275,7 @@ define_class!(
 
         #[unsafe(method(updater:didFinishUpdateCycleForUpdateCheck:error:))]
         fn update_probe_finished(&self, _updater: &AnyObject, _check: isize, error: Option<&NSError>) {
-            self.ivars().update_probe_finished.set(true);
+            self.ivars().view_model.set_update_probe_finished();
             if let Some(error) = error {
                 eprintln!("Soundy update check: {error}");
             }
@@ -298,8 +286,8 @@ define_class!(
             let menu = self.ivars().menu.get().expect("menu created before timer");
             if let Ok(expected) = std::env::var("SOUNDY_UPDATE_TEST_EXPECTED") {
                 assert!(self.ivars().updater.get().is_some(), "embedded updater must start");
-                assert!(self.ivars().update_probe_finished.get(), "background probe must finish");
-                let observed = self.ivars().update_version.borrow().clone();
+                assert!(self.ivars().view_model.update_probe_finished(), "background probe must finish");
+                let observed = self.ivars().view_model.update_version();
                 assert_eq!(observed.as_deref(), if expected == "none" { None } else { Some(expected.as_str()) });
                 let app = NSApplication::sharedApplication(self.mtm());
                 // SAFETY: NSApplication.windows is an NSArray of NSWindow objects.
@@ -314,16 +302,16 @@ define_class!(
                         assert!(class.contains("StatusBar"), "startup update checks must not display windows");
                     }
                 }
-                *self.ivars().update_version.borrow_mut() = None;
+                self.ivars().view_model.set_update_version(None);
                 self.refresh();
                 println!("OK: background update probe: {expected}; no windows shown");
             }
             assert!(self.ivars().window.borrow().is_none(), "startup must remain tray-only");
             for language in Language::ALL {
-                let title = self.ivars().language.get().text(Text::LanguageMenu);
+                let title = self.ivars().view_model.language().text(Text::LanguageMenu);
                 let language_menu = menu.itemWithTitle(&NSString::from_str(title)).unwrap().submenu().unwrap();
                 self.select_language(sel!(selectLanguage:), &language_menu.itemAtIndex(language as isize).unwrap());
-                assert_eq!(Language::load(&self.ivars().defaults), language, "language preference must persist");
+                assert_eq!(self.ivars().view_model.language(), language, "language preference must persist");
                 let submenu = |text| menu.itemWithTitle(&NSString::from_str(language.text(text))).unwrap().submenu().unwrap();
                 let keyboard_menu = submenu(Text::KeyboardSound);
                 assert_eq!(keyboard_menu.numberOfItems(), 47);
@@ -368,19 +356,19 @@ define_class!(
                 assert_eq!(login_item.state() == 1, matches!(login::status(), login::ENABLED | login::REQUIRES_APPROVAL));
                 // Smoke mode never starts the input tap, so Allow/Reconnect is present.
                 assert_eq!(menu.numberOfItems(), 16 + if login::status() == login::REQUIRES_APPROVAL { 1 } else { 0 });
-                *self.ivars().update_version.borrow_mut() = Some("99.0.0".into());
+                self.ivars().view_model.set_update_version(Some("99.0.0".into()));
                 self.refresh();
                 let title = format!("{}: 99.0.0…", language.text(Text::UpdateAvailable));
                 let update_item = menu.itemWithTitle(&NSString::from_str(&title)).unwrap();
                 assert_eq!(update_item.action(), Some(sel!(installUpdate:)));
                 assert!(update_item.isEnabled());
-                *self.ivars().update_version.borrow_mut() = None;
+                self.ivars().view_model.set_update_version(None);
                 self.refresh();
                 assert!(menu.itemWithTitle(&NSString::from_str(&title)).is_none());
                 let button = self.ivars().status.get().unwrap().button(self.mtm()).unwrap();
                 let image = button.image().unwrap();
                 assert!(image.isTemplate() && image.size() == NSSize::new(18.0, 18.0));
-                assert_eq!(button.toolTip().unwrap().to_string(), language.text(Text::InputUnavailable));
+                assert_eq!(button.toolTip().unwrap().to_string(), self.ivars().view_model.language().text(Text::InputUnavailable));
                 let weak = objc2::rc::autoreleasepool(|_| {
                     self.open_settings(sel!(openSettings:), self);
                     let window = self.ivars().window.borrow().as_ref().unwrap().clone();
@@ -411,14 +399,14 @@ define_class!(
                         // Exercise the actual NSControl target/action route.
                         unsafe { popup.sendAction_to(popup.action(), popup.target().as_deref()); }
                     }
-                    assert_eq!(self.ivars().defaults.integerForKey(ns_string!("profile")), 6);
-                    assert_eq!(self.ivars().defaults.integerForKey(ns_string!("mouseProfile")), 15);
+                    assert_eq!(self.ivars().view_model.profile().0, 6);
+                    assert_eq!(self.ivars().view_model.mouse_profile().0, 15);
                     let root = settings::content(&window);
                     let slider = root.subviews().iter().find_map(|view| view.downcast::<NSSlider>().ok()).unwrap();
                     for volume in [0.0, 37.0, 100.0, 25.0] {
                         slider.setDoubleValue(volume);
                         unsafe { slider.sendAction_to(slider.action(), slider.target().as_deref()); }
-                        assert_eq!(self.ivars().defaults.integerForKey(ns_string!("volume")), volume as isize);
+                        assert_eq!(self.ivars().view_model.volume(), volume as u8);
                         let percentage = root.subviews().iter().find_map(|view| view.downcast::<objc2_app_kit::NSTextField>().ok().filter(|label| label.tag() == consts::VOLUME_TAG)).unwrap();
                         assert_eq!(percentage.stringValue().to_string(), format!("{volume}%"));
                     }
@@ -426,10 +414,9 @@ define_class!(
                         let root = settings::content(&window);
                         let control = root.subviews().iter().find_map(|view| view.downcast::<NSButton>().ok().filter(|button| button.action() == Some(sel!(settingsLanguage:)) && button.tag() == option as isize)).unwrap();
                         unsafe { control.sendAction_to(control.action(), control.target().as_deref()); }
-                        assert_eq!(Language::load(&self.ivars().defaults), option);
+                        assert_eq!(self.ivars().view_model.language(), option);
                     }
-                    self.ivars().language.set(language);
-                    language.save(&self.ivars().defaults);
+                    self.ivars().view_model.select_language(language);
                     self.refresh();
                     let root = settings::content(&window);
                     let about = root.subviews().iter().find_map(|view| view.downcast::<NSButton>().ok().filter(|button| button.action() == Some(sel!(showAbout:)))).unwrap();
@@ -444,21 +431,24 @@ define_class!(
                     assert!(content.subviews().iter().filter_map(|view| view.downcast::<objc2_app_kit::NSTextField>().ok()).any(|label| label.stringValue().to_string().contains(env!("CARGO_PKG_VERSION"))));
                     assert_eq!(consts::github_url(), "https://github.com/not-pro");
                     assert_eq!(consts::telegram_url(), "https://nbautin.t.me");
-                    assert_eq!(self.ivars().defaults.integerForKey(ns_string!("volume")), 25);
-                    assert_eq!(Language::load(&self.ivars().defaults), language);
+                    assert_eq!(self.ivars().view_model.volume(), 25);
+                    assert_eq!(self.ivars().view_model.language(), language);
                     self.close_settings(sel!(closeSettings:), self);
                     assert!(self.ivars().about.borrow().is_none());
                     assert!(self.ivars().window.borrow().is_none(), "close must clear the UI owner");
-                    assert!(self.ivars().worker.borrow().is_some(), "audio must survive closing UI");
+                    assert!(self.ivars().view_model.worker_active(), "audio must survive closing UI");
                     weak
                 });
                 assert!(weak.load().is_none(), "closed window must deallocate after the event pool drains");
                 println!("OK: {} settings controls, persistence, reopen and UI deallocation", language.code());
                 println!("OK: {} menu, language selection and saved preference; no input monitoring started", language.code());
             }
-            self.ivars().defaults.removePersistentDomainForName(&smoke_defaults_name());
+            self.ivars()
+                .view_model
+                .persistence()
+                .remove_smoke_defaults(&smoke_defaults_name());
             if std::env::var_os("SOUNDY_SETTINGS_PREVIEW").is_some() {
-                self.ivars().language.set(Language::Russian);
+                self.ivars().view_model.select_language(Language::Russian);
                 self.open_settings(sel!(openSettings:), self);
                 return;
             }
@@ -467,20 +457,13 @@ define_class!(
 
         #[unsafe(method(toggleLogin:))]
         fn toggle_login(&self, _sender: &NSMenuItem) {
-            let enable = !matches!(login::status(), login::ENABLED | login::REQUIRES_APPROVAL);
-            let result = login::set_enabled(enable);
-            // Remember the intent so an update that drops the login item can restore it.
-            self.ivars()
-                .defaults
-                .setBool_forKey(enable, ns_string!("launchAtLogin"));
+            let result = self.ivars().view_model.toggle_login();
             self.refresh();
-            if enable && login::status() == login::REQUIRES_APPROVAL {
-                login::open_settings();
-            } else if let Err(error) = result {
+            if let Err(error) = result {
                 let alert = NSAlert::new(self.mtm());
-                let language = self.ivars().language.get();
+                let language = self.ivars().view_model.language();
                 alert.setMessageText(&NSString::from_str(language.text(Text::LoginFailed)));
-                alert.setInformativeText(&error.localizedDescription());
+                alert.setInformativeText(&NSString::from_str(&error));
                 alert.addButtonWithTitle(&NSString::from_str(language.text(Text::OK)));
                 alert.runModal();
             }
@@ -492,32 +475,23 @@ define_class!(
         #[unsafe(method(selectProfile:))]
         fn select_profile(&self, sender: &NSMenuItem) {
             let profile = Profile::from_index(sender.tag().max(0) as usize);
-            self.ivars().controls.profile.store(profile.0, Ordering::Relaxed);
-            self.ivars()
-                .global
-                .set((profile.0, self.ivars().global.get().1));
-            self.ivars().defaults.setInteger_forKey(isize::from(profile.0), ns_string!("profile"));
-            self.play_preview();
+            self.ivars().view_model.select_profile(profile);
+            self.ivars().view_model.play_preview();
             self.refresh();
         }
 
         #[unsafe(method(selectMouse:))]
         fn select_mouse(&self, sender: &NSMenuItem) {
             let profile = MouseProfile::from_index(sender.tag().max(0) as usize);
-            self.ivars().controls.mouse_profile.store(profile.0, Ordering::Relaxed);
-            self.ivars()
-                .global
-                .set((self.ivars().global.get().0, profile.0));
-            self.ivars().defaults.setInteger_forKey(isize::from(profile.0), ns_string!("mouseProfile"));
-            self.play_mouse_preview();
+            self.ivars().view_model.select_mouse(profile);
+            self.ivars().view_model.play_mouse_preview();
             self.refresh();
         }
 
         #[unsafe(method(selectVolume:))]
         fn select_volume(&self, sender: &NSMenuItem) {
             let volume = sender.tag().clamp(0, 100) as u8;
-            self.ivars().controls.volume.store(volume, Ordering::Relaxed);
-            self.ivars().defaults.setInteger_forKey(volume.into(), ns_string!("volume"));
+            self.ivars().view_model.set_volume(volume);
             self.refresh();
         }
 
@@ -528,90 +502,66 @@ define_class!(
                 let url = NSURL::URLWithString(ns_string!("x-apple.systempreferences:com.apple.preference.security?Privacy_ListenEvent"));
                 if let Some(url) = url { NSWorkspace::sharedWorkspace().openURL(&url); }
             }
+            self.ivars().view_model.set_input_status(InputStatus::Disconnected);
             self.refresh();
         }
 
         #[unsafe(method(selectLanguage:))]
         fn select_language(&self, sender: &NSMenuItem) {
             if let Some(&language) = usize::try_from(sender.tag()).ok().and_then(|index| Language::ALL.get(index)) {
-                self.ivars().language.set(language);
-                language.save(&self.ivars().defaults);
+                self.ivars().view_model.select_language(language);
                 self.refresh();
             }
         }
 
         #[unsafe(method(toggleEnabled:))]
         fn toggle_enabled_menu(&self, _sender: &NSMenuItem) {
-            self.toggle_power();
+            self.ivars().view_model.toggle_enabled();
+            self.refresh();
         }
 
         #[unsafe(method(toggleStereo:))]
         fn toggle_stereo(&self, _sender: &NSMenuItem) {
-            let on = !self.ivars().controls.stereo_pan.load(Ordering::Relaxed);
-            self.ivars().controls.stereo_pan.store(on, Ordering::Relaxed);
-            self.ivars()
-                .defaults
-                .setBool_forKey(on, ns_string!("stereoKeyPosition"));
+            self.ivars().view_model.toggle_stereo();
             self.refresh();
         }
 
         #[unsafe(method(selectRoute:))]
         fn select_route(&self, sender: &NSMenuItem) {
             let mode = routes::Mode::from_index(sender.tag().max(0) as usize);
-            self.ivars().route_mode.set(mode);
-            self.ivars()
-                .defaults
-                .setInteger_forKey(sender.tag().max(0), ns_string!("audioRoute"));
-            self.ivars().controls.route_allows.store(
-                mode.allows(self.ivars().output_class.get()),
-                Ordering::Relaxed,
-            );
+            self.ivars().view_model.set_route_mode(mode);
             self.refresh();
         }
 
         #[unsafe(method(appUseGlobal:))]
         fn app_use_global(&self, _sender: &NSMenuItem) {
-            let Some(frontmost) = self.ivars().frontmost.borrow().clone() else {
-                return;
-            };
-            self.ivars().overrides.borrow_mut().remove(&frontmost);
-            self.save_overrides();
-            self.apply_profiles();
+            self.ivars().view_model.remove_override();
             self.refresh();
         }
 
         #[unsafe(method(appProfile:))]
         fn app_profile(&self, sender: &NSMenuItem) {
-            self.set_override(Some(sender.tag() as i16), None);
+            self.ivars().view_model.set_override(Some(sender.tag() as i16), None);
+            self.refresh();
         }
 
         #[unsafe(method(appMouse:))]
         fn app_mouse(&self, sender: &NSMenuItem) {
-            self.set_override(None, Some(sender.tag().clamp(0, 15) as u8));
+            self.ivars().view_model.set_override(None, Some(sender.tag().clamp(0, 15) as u8));
+            self.refresh();
         }
 
         #[unsafe(method(recordHotkey:))]
         fn record_hotkey(&self, sender: &NSMenuItem) {
             if let Some(&action) = HotkeyAction::ALL.get(sender.tag() as usize) {
-                let mut state = self.ivars().hotkeys.lock().expect("hotkey state not poisoned");
-                state.recording = if state.recording == Some(action) {
-                    None
-                } else {
-                    Some(action)
-                };
-                drop(state);
+                self.ivars().view_model.start_recording_hotkey(action);
                 self.refresh();
             }
         }
 
         #[unsafe(method(resetHotkeys:))]
         fn reset_hotkeys(&self, _sender: &NSMenuItem) {
-            let mut state = self.ivars().hotkeys.lock().expect("hotkey state not poisoned");
-            state.shortcuts = [None; 4];
-            state.recording = None;
-            let saved = state.save();
-            drop(state);
-            self.save_hotkeys(&saved);
+            self.ivars().view_model.reset_hotkeys();
             self.refresh();
         }
 
@@ -622,22 +572,8 @@ define_class!(
             let Some(&action) = HotkeyAction::ALL.get(slot as usize) else {
                 return;
             };
-            let mut state = self.ivars().hotkeys.lock().expect("hotkey state not poisoned");
-            state.recording = None;
-            if let Some(shortcut) =
-                combo.and_then(|text| hotkeys::Shortcut::decode(&text.to_string()))
-            {
-                // One combination owns one action: drop it from a previous owner.
-                for other in HotkeyAction::ALL {
-                    if other != action && state.shortcuts[other.slot()] == Some(shortcut) {
-                        state.shortcuts[other.slot()] = None;
-                    }
-                }
-                state.shortcuts[action.slot()] = Some(shortcut);
-            }
-            let saved = state.save();
-            drop(state);
-            self.save_hotkeys(&saved);
+            let shortcut = combo.and_then(|text| Shortcut::decode(&text.to_string()));
+            self.ivars().view_model.record_hotkey(action, shortcut);
             self.refresh();
         }
 
@@ -645,20 +581,17 @@ define_class!(
         /// hotkey fires; it runs even while sounds are disabled.
         #[unsafe(method(handleHotkey:))]
         fn handle_hotkey(&self, slot: isize) {
-            match HotkeyAction::ALL.get(slot as usize) {
-                Some(HotkeyAction::Power) => self.toggle_power(),
-                Some(HotkeyAction::VolumeUp) => self.bump_volume(10),
-                Some(HotkeyAction::VolumeDown) => self.bump_volume(-10),
-                Some(HotkeyAction::ToggleApp) => self.toggle_app_sound(),
-                None => {}
+            if let Some(&action) = HotkeyAction::ALL.get(slot as usize) {
+                self.ivars().view_model.handle_hotkey(action);
+                self.refresh();
             }
         }
 
         /// Called on the main run loop when the default output device changes.
         #[unsafe(method(routeChanged))]
         fn route_changed(&self) {
-            self.update_output_route();
-            self.restart_audio();
+            self.ivars().view_model.set_output_class(routes::current_output_class());
+            self.ivars().view_model.restart_audio();
             self.refresh();
         }
 
@@ -666,18 +599,15 @@ define_class!(
         fn workspace_note(&self, notification: &NSNotification) {
             let name = notification.name().to_string();
             if name == *"NSWorkspaceDidWakeNotification" {
-                self.restart_audio();
+                self.ivars().view_model.restart_audio();
             } else if name == *"NSWorkspaceDidActivateApplicationNotification" {
                 let bundle = notification
                     .userInfo()
                     .and_then(|info| info.objectForKey(ns_string!("NSWorkspaceApplicationKey")))
                     .and_then(|object| object.downcast::<NSRunningApplication>().ok())
                     .and_then(|app| app.bundleIdentifier().map(|bundle| bundle.to_string()));
-                if bundle != *self.ivars().frontmost.borrow() {
-                    *self.ivars().frontmost.borrow_mut() = bundle;
-                    self.apply_profiles();
-                    self.refresh();
-                }
+                self.ivars().view_model.set_frontmost_app(bundle);
+                self.refresh();
             }
         }
 
@@ -689,174 +619,11 @@ define_class!(
 );
 
 impl Delegate {
-    fn play_preview(&self) {
-        if let Some(worker) = self.ivars().worker.borrow().as_ref() {
-            let _ = worker.sender.try_send(Command::Preview);
-        }
-    }
-
-    fn play_mouse_preview(&self) {
-        if let Some(worker) = self.ivars().worker.borrow().as_ref() {
-            let _ = worker.sender.try_send(Command::PreviewMouse);
-        }
-    }
-
-    fn toggle_power(&self) {
-        let controls = &self.ivars().controls;
-        let enabled = !controls.enabled.load(Ordering::Relaxed);
-        controls.enabled.store(enabled, Ordering::Relaxed);
-        self.ivars()
-            .defaults
-            .setBool_forKey(enabled, ns_string!("enabled"));
-        self.refresh();
-    }
-
-    fn bump_volume(&self, delta: i16) {
-        let current = self.ivars().controls.volume.load(Ordering::Relaxed) as i16;
-        let volume = (current + delta).clamp(0, 100) as u8;
-        self.ivars()
-            .controls
-            .volume
-            .store(volume, Ordering::Relaxed);
-        self.ivars()
-            .defaults
-            .setInteger_forKey(volume.into(), ns_string!("volume"));
-        if let Some(window) = self.ivars().window.borrow().as_ref() {
-            settings::sync_volume(window, self.ivars().language.get(), volume);
-        }
-        self.refresh();
-    }
-
-    /// The per-app hotkey: override the current app with silence, or drop the
-    /// override to follow the global profiles again.
-    fn toggle_app_sound(&self) {
-        let Some(frontmost) = self.ivars().frontmost.borrow().clone() else {
-            return;
-        };
-        let mut map = self.ivars().overrides.borrow_mut();
-        if map.remove(&frontmost).is_none() {
-            map.insert(
-                frontmost,
-                perapp::Override {
-                    keyboard: -1,
-                    mouse: 0,
-                },
-            );
-        }
-        drop(map);
-        self.save_overrides();
-        self.apply_profiles();
-        self.refresh();
-    }
-
-    /// Sets one side of the frontmost app's override; `None` keeps the side's
-    /// current effective value. Creates the override entry if needed.
-    fn set_override(&self, keyboard: Option<i16>, mouse: Option<u8>) {
-        let Some(frontmost) = self.ivars().frontmost.borrow().clone() else {
-            return;
-        };
-        let (global_keyboard, global_mouse) = self.ivars().global.get();
-        let mut map = self.ivars().overrides.borrow_mut();
-        let existing = map.get(&frontmost).copied();
-        let entry = perapp::Override {
-            keyboard: keyboard
-                .unwrap_or_else(|| existing.map_or(global_keyboard as i16, |over| over.keyboard)),
-            mouse: mouse.unwrap_or_else(|| existing.map_or(global_mouse, |over| over.mouse)),
-        };
-        map.insert(frontmost, entry);
-        drop(map);
-        self.save_overrides();
-        self.apply_profiles();
-        self.refresh();
-    }
-
-    fn save_overrides(&self) {
-        let saved = perapp::save(&self.ivars().overrides.borrow());
-        let text = NSString::from_str(&saved);
-        // SAFETY: NSUserDefaults copies this immutable NSString property-list value.
-        unsafe {
-            self.ivars()
-                .defaults
-                .setObject_forKey(Some(&text), ns_string!("perApp"))
-        };
-    }
-
-    fn save_hotkeys(&self, saved: &str) {
-        let text = NSString::from_str(saved);
-        // SAFETY: same immutable NSString property-list value contract.
-        unsafe {
-            self.ivars()
-                .defaults
-                .setObject_forKey(Some(&text), ns_string!("hotkeys"))
-        };
-    }
-
-    /// Recomputes the effective profiles from the global choice and the
-    /// frontmost app's override, if one exists.
-    fn apply_profiles(&self) {
-        let (global_keyboard, global_mouse) = self.ivars().global.get();
-        let frontmost = self.ivars().frontmost.borrow().clone();
-        let (keyboard, mouse) = perapp::resolve(
-            &self.ivars().overrides.borrow(),
-            frontmost.as_deref(),
-            global_keyboard,
-            global_mouse,
-        );
-        let controls = &self.ivars().controls;
-        match keyboard {
-            Some(index) => {
-                controls.keyboard_off.store(false, Ordering::Relaxed);
-                controls.profile.store(index, Ordering::Relaxed);
-            }
-            None => controls.keyboard_off.store(true, Ordering::Relaxed),
-        }
-        controls.mouse_profile.store(mouse, Ordering::Relaxed);
-    }
-
-    fn update_output_route(&self) {
-        let class = routes::current_output_class();
-        self.ivars().output_class.set(class);
-        let mode = self.ivars().route_mode.get();
-        self.ivars()
-            .controls
-            .route_allows
-            .store(mode.allows(class), Ordering::Relaxed);
-    }
-
-    fn restart_audio(&self) {
-        if let Some(worker) = self.ivars().worker.borrow().as_ref() {
-            let _ = worker.sender.try_send(Command::ResetAudio);
-        }
-    }
-
-    fn shortcut_title(&self, action: HotkeyAction) -> String {
-        let language = self.ivars().language.get();
-        let state = self
-            .ivars()
-            .hotkeys
-            .lock()
-            .expect("hotkey state not poisoned");
-        if state.recording == Some(action) {
-            return language.text(Text::PressKeys).into();
-        }
-        let label = match action {
-            HotkeyAction::Power => Text::ActionPower,
-            HotkeyAction::VolumeUp => Text::ActionVolumeUp,
-            HotkeyAction::VolumeDown => Text::ActionVolumeDown,
-            HotkeyAction::ToggleApp => Text::ActionToggleApp,
-        };
-        let combo = state.shortcuts[action.slot()]
-            .map(|shortcut| shortcut.display(key_label))
-            .unwrap_or_else(|| language.text(Text::NoShortcut).into());
-        format!("{}: {}", language.text(label), combo)
-    }
-
     fn frontmost_name(&self) -> String {
         let fallback = self
             .ivars()
-            .frontmost
-            .borrow()
-            .clone()
+            .view_model
+            .frontmost_app()
             .unwrap_or_else(|| "?".into());
         NSWorkspace::sharedWorkspace()
             .frontmostApplication()
@@ -877,107 +644,33 @@ impl Delegate {
         } else {
             NSUserDefaults::standardUserDefaults()
         };
-        controls.profile.store(
-            Profile::from_index(defaults.integerForKey(ns_string!("profile")).max(0) as usize).0,
-            Ordering::Relaxed,
-        );
-        controls.mouse_profile.store(
-            MouseProfile::from_index(
-                defaults.integerForKey(ns_string!("mouseProfile")).max(0) as usize
-            )
-            .0,
-            Ordering::Relaxed,
-        );
-        if defaults.objectForKey(ns_string!("volume")).is_some() {
-            controls.volume.store(
-                defaults.integerForKey(ns_string!("volume")).clamp(0, 100) as u8,
-                Ordering::Relaxed,
-            );
-        }
-        if defaults.objectForKey(ns_string!("enabled")).is_some() {
-            controls.enabled.store(
-                defaults.boolForKey(ns_string!("enabled")),
-                Ordering::Relaxed,
-            );
-        }
-        if defaults
-            .objectForKey(ns_string!("stereoKeyPosition"))
-            .is_some()
-        {
-            controls.stereo_pan.store(
-                defaults.boolForKey(ns_string!("stereoKeyPosition")),
-                Ordering::Relaxed,
-            );
-        }
-        let route_mode = routes::Mode::from_index(
-            defaults.integerForKey(ns_string!("audioRoute")).max(0) as usize,
-        );
-        let output_class = routes::current_output_class();
-        controls
-            .route_allows
-            .store(route_mode.allows(output_class), Ordering::Relaxed);
-        let global = (
-            controls.profile.load(Ordering::Relaxed),
-            controls.mouse_profile.load(Ordering::Relaxed),
-        );
-        // Sparkle replaces the bundle on update; macOS drops the login item when the
-        // code identity changes, so restore the user's last explicit choice.
-        if defaults.boolForKey(ns_string!("launchAtLogin")) && login::status() == 0 {
-            let _ = login::set_enabled(true);
-        }
-        let hotkeys = Arc::new(Mutex::new(HotkeyState::load(
-            defaults
-                .stringForKey(ns_string!("hotkeys"))
-                .map(|text| text.to_string())
-                .as_deref(),
-        )));
-        let overrides = perapp::load(
-            defaults
-                .stringForKey(ns_string!("perApp"))
-                .map(|text| text.to_string())
-                .as_deref(),
-        );
+        let persistence = Box::new(view_model::mac::Persistence::new(defaults));
+        let view_model = ViewModel::new(persistence, controls, Some(worker), language, smoke_test);
         let this = Self::alloc(mtm).set_ivars(State {
-            controls,
+            view_model,
             window: RefCell::new(None),
             about: RefCell::new(None),
-            language: Cell::new(language),
-            defaults,
-            smoke_test,
-            worker: RefCell::new(Some(worker)),
             tap: RefCell::new(None),
             status: OnceCell::new(),
             menu: OnceCell::new(),
             updater: OnceCell::new(),
-            update_version: RefCell::new(None),
-            update_probe_finished: Cell::new(false),
-            hotkeys,
-            global: Cell::new(global),
-            overrides: RefCell::new(overrides),
-            frontmost: RefCell::new(None),
-            route_mode: Cell::new(route_mode),
-            output_class: Cell::new(output_class),
             route_listener: RefCell::new(None),
         });
         unsafe { msg_send![super(this), init] }
     }
 
     fn refresh(&self) {
-        let language = self.ivars().language.get();
+        let view_model = &self.ivars().view_model;
+        let language = view_model.language();
         let granted = CGPreflightListenEventAccess();
         let mut tap = self.ivars().tap.borrow_mut();
         if !granted || tap.as_ref().is_some_and(|tap| !tap.is_enabled()) {
             tap.take();
         }
         let mut input_error = None;
-        if granted && tap.is_none() && !self.ivars().smoke_test {
-            if let Some(worker) = self.ivars().worker.borrow().as_ref() {
-                match InputTap::start(
-                    worker.sender.clone(),
-                    language,
-                    self.ivars().hotkeys.clone(),
-                    self,
-                ) {
+        if granted && tap.is_none() && !view_model.smoke_test() {
+            if let Some(worker) = view_model.worker_ref().as_ref() {
+                match InputTap::start(worker.sender.clone(), language, view_model.hotkeys(), self) {
                     Ok(new_tap) => *tap = Some(new_tap),
                     Err(error) => input_error = Some(error),
                 }
@@ -985,11 +678,19 @@ impl Delegate {
         }
         let listening = tap.is_some();
         drop(tap);
+        view_model.set_input_status(if !granted {
+            InputStatus::PermissionDenied
+        } else if listening {
+            InputStatus::Listening
+        } else if let Some(error) = input_error.clone() {
+            InputStatus::Error(error)
+        } else {
+            InputStatus::Disconnected
+        });
         let Some(menu) = self.ivars().menu.get() else {
             return;
         };
         menu.removeAllItems();
-        let controls = &self.ivars().controls;
         self.item(
             menu,
             language.text(Text::OpenSettings),
@@ -1026,47 +727,39 @@ impl Delegate {
             language.text(Text::Enabled),
             Some(sel!(toggleEnabled:)),
             0,
-            controls.enabled.load(Ordering::Relaxed),
+            view_model.enabled(),
         );
         let keyboard_menu = self.submenu(menu, language.text(Text::KeyboardSound));
-        for category in [
-            Text::Mechanical,
-            Text::Electronic,
-            Text::Fun,
-            Text::Typewriters,
-        ] {
+        for (category, profiles) in view_model.keyboard_profiles_by_category() {
             if keyboard_menu.numberOfItems() > 0 {
                 keyboard_menu.addItem(&NSMenuItem::separatorItem(self.mtm()));
             }
             self.item(&keyboard_menu, language.text(category), None, 0, false);
-            for profile in Profile::all().filter(|profile| profile.category() == category) {
+            for profile in profiles {
                 self.item(
                     &keyboard_menu,
                     profile.name(),
                     Some(sel!(selectProfile:)),
                     isize::from(profile.0),
-                    controls.profile.load(Ordering::Relaxed) == profile.0,
+                    view_model.profile().0 == profile.0,
                 );
             }
         }
         let mouse_menu = self.submenu(menu, language.text(Text::MouseSound));
-        for profile in MouseProfile::all() {
+        for profile in view_model.mouse_profiles() {
             self.item(
                 &mouse_menu,
                 &language.mouse_name(profile.0),
                 Some(sel!(selectMouse:)),
                 isize::from(profile.0),
-                controls.mouse_profile.load(Ordering::Relaxed) == profile.0,
+                view_model.mouse_profile().0 == profile.0,
             );
         }
         let app_title = language
             .text(Text::ForApp)
             .replace("{app}", &self.frontmost_name());
         let app_menu = self.submenu(menu, &app_title);
-        let frontmost = self.ivars().frontmost.borrow().clone();
-        let active_override = frontmost
-            .as_ref()
-            .and_then(|bundle| self.ivars().overrides.borrow().get(bundle).copied());
+        let active_override = view_model.active_override();
         self.item(
             &app_menu,
             language.text(Text::UseGlobal),
@@ -1103,17 +796,17 @@ impl Delegate {
         }
         menu.addItem(&NSMenuItem::separatorItem(self.mtm()));
         let volume_menu = self.submenu(menu, language.text(Text::Volume));
-        for volume in [0, 10, 25, 50, 75, 100] {
+        for volume in view_model.volume_steps() {
             self.item(
                 &volume_menu,
                 &format!("{volume}%"),
                 Some(sel!(selectVolume:)),
-                volume,
-                controls.volume.load(Ordering::Relaxed) as isize == volume,
+                volume.into(),
+                view_model.volume() == volume,
             );
         }
         let language_menu = self.submenu(menu, language.text(Text::LanguageMenu));
-        for option in Language::ALL {
+        for option in view_model.languages() {
             self.item(
                 &language_menu,
                 option.name(),
@@ -1127,10 +820,10 @@ impl Delegate {
             language.text(Text::StereoKeyPosition),
             Some(sel!(toggleStereo:)),
             0,
-            controls.stereo_pan.load(Ordering::Relaxed),
+            view_model.stereo_pan(),
         );
         let route_menu = self.submenu(menu, language.text(Text::PlayThrough));
-        let device = match self.ivars().output_class.get() {
+        let device = match view_model.output_class() {
             routes::DeviceClass::Headphones => language.text(Text::OutputHeadphones),
             routes::DeviceClass::Speakers => language.text(Text::OutputSpeakers),
             routes::DeviceClass::Unknown => language.text(Text::OutputUnknown),
@@ -1143,27 +836,20 @@ impl Delegate {
             false,
         );
         route_menu.addItem(&NSMenuItem::separatorItem(self.mtm()));
-        for (index, text) in [
-            Text::RouteAlways,
-            Text::RouteHeadphones,
-            Text::RouteSpeakers,
-        ]
-        .into_iter()
-        .enumerate()
-        {
+        for (index, (text, mode)) in view_model.route_options().into_iter().enumerate() {
             self.item(
                 &route_menu,
                 language.text(text),
                 Some(sel!(selectRoute:)),
                 index as isize,
-                self.ivars().route_mode.get() == routes::Mode::from_index(index),
+                view_model.route_mode() == mode,
             );
         }
         let hotkey_menu = self.submenu(menu, language.text(Text::Shortcuts));
-        for action in HotkeyAction::ALL {
+        for action in view_model.hotkey_actions() {
             let item = self.item(
                 &hotkey_menu,
-                &self.shortcut_title(action),
+                &view_model.shortcut_title(action, key_label),
                 Some(sel!(recordHotkey:)),
                 action.slot() as isize,
                 false,
@@ -1178,15 +864,18 @@ impl Delegate {
             0,
             false,
         );
-        let login_status = login::status();
+        let login_status = view_model.login_status();
         self.item(
             menu,
             language.text(Text::LaunchAtLogin),
             Some(sel!(toggleLogin:)),
             0,
-            matches!(login_status, login::ENABLED | login::REQUIRES_APPROVAL),
+            matches!(
+                login_status,
+                LoginStatus::Enabled | LoginStatus::RequiresApproval
+            ),
         );
-        if login_status == login::REQUIRES_APPROVAL {
+        if login_status == LoginStatus::RequiresApproval {
             self.item(
                 menu,
                 language.text(Text::ApproveLogin),
@@ -1196,7 +885,7 @@ impl Delegate {
             );
         }
         menu.addItem(&NSMenuItem::separatorItem(self.mtm()));
-        if let Some(version) = self.ivars().update_version.borrow().as_ref() {
+        if let Some(version) = view_model.update_version() {
             self.item(
                 menu,
                 &format!("{}: {version}…", language.text(Text::UpdateAvailable)),
@@ -1210,14 +899,7 @@ impl Delegate {
             if let Some(about) = self.ivars().about.borrow_mut().take() {
                 about.close();
             }
-            settings::populate(
-                window,
-                menu,
-                self,
-                language,
-                controls.volume.load(Ordering::Relaxed),
-                listening,
-            );
+            settings::populate(window, menu, self, view_model, listening);
         }
         if let Some(button) = self
             .ivars()
@@ -1287,9 +969,7 @@ pub fn run(root: &Path, smoke_test: bool, language: Language) -> Result<(), Stri
     let controls = Arc::new(Controls::default());
     let worker = Worker::start(root, controls.clone(), language)?;
     let delegate = Delegate::new(mtm, controls, worker, smoke_test, language);
-    if let Some(worker) = delegate.ivars().worker.borrow().as_ref() {
-        let _ = worker.sender.try_send(Command::ProfilesChanged);
-    }
+    delegate.ivars().view_model.notify_profiles_changed();
     app.setDelegate(Some(ProtocolObject::from_ref(&*delegate)));
     app.run();
     Ok(())

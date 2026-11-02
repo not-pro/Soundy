@@ -10,6 +10,7 @@ mod ui;
 #[cfg(windows)]
 #[path = "ui_windows.rs"]
 mod ui;
+mod view_model;
 
 #[cfg(not(any(target_os = "macos", windows)))]
 compile_error!("Soundy supports macOS 13+ and Windows 10+ only");

@@ -29,16 +29,19 @@ use windows::Win32::UI::WindowsAndMessaging::{
 use windows::core::{PCWSTR, w};
 
 use crate::{
-    consts,
     core::{
-        audio::{Command, Controls, Worker},
+        audio::{Controls, Worker},
         catalog::{MouseProfile, Profile},
         i18n::{Language, Text},
         input::InputHook,
         login,
         settings::Config,
     },
+    view_model::{self, ViewModel},
 };
+
+#[path = "ui_windows_settings.rs"]
+mod settings;
 
 const TRAY_MESSAGE: u32 = WM_APP + 1;
 const TRAY_ID: u32 = 1;
@@ -55,79 +58,64 @@ const MENU_VOLUME: u32 = 300;
 const VOLUMES: [u8; 6] = [0, 10, 25, 50, 75, 100];
 const MENU_LANGUAGE: u32 = 400;
 const MENU_LANGUAGE_LAST: u32 = MENU_LANGUAGE + 2;
+const MENU_OPEN_SETTINGS: u32 = 600;
 const MENU_LOGIN: u32 = 500;
 const MENU_GITHUB: u32 = 501;
 const MENU_TELEGRAM: u32 = 502;
 const MENU_QUIT: u32 = 503;
 
-/// Top-level tray menu entries: five groups, separators, links and Quit.
-const MENU_ITEMS: i32 = 13;
+/// Top-level tray menu entries: Open, five groups, separators, links and Quit.
+const MENU_ITEMS: i32 = 15;
 
-struct App {
+pub(crate) struct App {
     hwnd: HWND,
-    config: Config,
-    controls: Arc<Controls>,
-    worker: Option<Worker>,
+    pub(crate) view_model: ViewModel,
     hook: Option<InputHook>,
     tray: Tray,
 }
 
 impl App {
     fn preview(&self) {
-        if let Some(worker) = &self.worker {
-            let _ = worker.sender.try_send(Command::Preview);
-        }
+        self.view_model.play_preview();
     }
 
     fn preview_mouse(&self) {
-        if let Some(worker) = &self.worker {
-            let _ = worker.sender.try_send(Command::PreviewMouse);
-        }
+        self.view_model.play_mouse_preview();
     }
 
     fn activate(&mut self, id: u32) {
         match id {
             _ if (MENU_KEYBOARD..=MENU_KEYBOARD_LAST).contains(&id) => {
                 let profile = Profile::from_index((id - MENU_KEYBOARD) as usize);
-                self.controls.profile.store(profile.0, Ordering::Relaxed);
-                self.config.profile = profile.0;
-                self.config.save();
+                self.view_model.select_profile(profile);
                 self.preview();
             }
             _ if (MENU_MOUSE..=MENU_MOUSE_LAST).contains(&id) => {
                 let profile = MouseProfile::from_index((id - MENU_MOUSE) as usize);
-                self.controls
-                    .mouse_profile
-                    .store(profile.0, Ordering::Relaxed);
-                self.config.mouse_profile = profile.0;
-                self.config.save();
+                self.view_model.select_mouse(profile);
                 self.preview_mouse();
             }
             _ if (MENU_VOLUME..MENU_VOLUME + VOLUMES.len() as u32).contains(&id) => {
                 let volume = VOLUMES[(id - MENU_VOLUME) as usize];
-                self.controls.volume.store(volume, Ordering::Relaxed);
-                self.config.volume = volume;
-                self.config.save();
+                self.view_model.set_volume(volume);
                 self.preview();
             }
             _ if (MENU_LANGUAGE..=MENU_LANGUAGE_LAST).contains(&id) => {
                 let language = Language::ALL[(id - MENU_LANGUAGE) as usize];
-                self.config.language = language;
-                self.config.save();
+                self.view_model.select_language(language);
                 self.tray.set_tip(language.text(Text::Tooltip));
             }
             MENU_LOGIN => {
-                let enable = login::status() != login::ENABLED;
-                match login::set_enabled(enable) {
-                    Ok(()) => {
-                        self.config.launch_at_login = enable;
-                        self.config.save();
-                    }
-                    Err(error) => show_error(&error, self.config.language),
+                let language = self.view_model.language();
+                if let Err(error) = self.view_model.toggle_login() {
+                    show_error(&error, language);
                 }
             }
-            MENU_GITHUB => open_url(consts::github_url()),
-            MENU_TELEGRAM => open_url(consts::telegram_url()),
+            MENU_OPEN_SETTINGS => {
+                settings::show(self.hwnd, &self.view_model);
+            }
+            MENU_GITHUB => open_url(self.view_model.github_url()),
+            MENU_TELEGRAM => open_url(self.view_model.telegram_url()),
             MENU_QUIT => unsafe {
                 let _ = DestroyWindow(self.hwnd);
             },
@@ -169,40 +157,42 @@ impl App {
     }
 
     fn build_menu(&self) -> HMENU {
-        let language = self.config.language;
+        let language = self.view_model.language();
         // SAFETY: Every handle created here is owned by this function's result and
         // destroyed by `show_menu`; labels live until the append call returns.
         unsafe {
             let menu = CreatePopupMenu().expect("tray menu");
+            add_item(
+                menu,
+                MENU_OPEN_SETTINGS,
+                language.text(Text::OpenSettings),
+                false,
+            );
+            add_separator(menu);
             let keyboard = CreatePopupMenu().expect("keyboard submenu");
-            for category in [
-                Text::Mechanical,
-                Text::Electronic,
-                Text::Fun,
-                Text::Typewriters,
-            ] {
+            for (category, profiles) in self.view_model.keyboard_profiles_by_category() {
                 if GetMenuItemCount(Some(keyboard)) > 0 {
                     add_separator(keyboard);
                 }
                 add_grayed(keyboard, language.text(category));
-                for profile in Profile::all().filter(|profile| profile.category() == category) {
+                for profile in profiles {
                     add_item(
                         keyboard,
                         MENU_KEYBOARD + u32::from(profile.0),
                         profile.name(),
-                        profile.0 == self.config.profile,
+                        profile.0 == self.view_model.profile().0,
                     );
                 }
             }
             add_submenu(menu, keyboard, language.text(Text::KeyboardSound));
 
             let mouse = CreatePopupMenu().expect("mouse submenu");
-            for profile in MouseProfile::all() {
+            for profile in self.view_model.mouse_profiles() {
                 add_item(
                     mouse,
                     MENU_MOUSE + u32::from(profile.0),
                     &language.mouse_name(profile.0),
-                    profile.0 == self.config.mouse_profile,
+                    profile.0 == self.view_model.mouse_profile().0,
                 );
             }
             add_submenu(menu, mouse, language.text(Text::MouseSound));
@@ -214,7 +204,7 @@ impl App {
                     volume,
                     MENU_VOLUME + index as u32,
                     &format!("{value}%"),
-                    value == self.config.volume,
+                    value == self.view_model.volume(),
                 );
             }
             add_submenu(menu, volume, language.text(Text::Volume));
@@ -253,15 +243,15 @@ impl App {
             let menu = self.build_menu();
             assert_eq!(GetMenuItemCount(Some(menu)), MENU_ITEMS, "tray menu shape");
             let submenu = |index: i32| GetSubMenu(menu, index);
-            assert_eq!(GetMenuItemCount(Some(submenu(0))), 47, "keyboard groups");
-            assert_eq!(GetMenuItemCount(Some(submenu(1))), 16, "mouse pairs");
+            assert_eq!(GetMenuItemCount(Some(submenu(2))), 47, "keyboard groups");
+            assert_eq!(GetMenuItemCount(Some(submenu(3))), 16, "mouse pairs");
             assert_eq!(
-                GetMenuItemCount(Some(submenu(3))),
+                GetMenuItemCount(Some(submenu(5))),
                 VOLUMES.len() as i32,
                 "volume steps"
             );
-            assert_eq!(GetMenuItemCount(Some(submenu(4))), 3, "languages");
-            let language = self.config.language;
+            assert_eq!(GetMenuItemCount(Some(submenu(6))), 3, "languages");
+            let language = self.view_model.language();
             let _ = DestroyMenu(menu);
             println!(
                 "OK: tray menu in {:?}: 5 groups, {} volume steps, 3 languages; no audio or hooks started",
@@ -398,7 +388,7 @@ fn add_submenu(menu: HMENU, submenu: HMENU, text: &str) {
     };
 }
 
-fn open_url(url: &str) {
+pub(crate) fn open_url(url: &str) {
     let url = wide(url);
     // SAFETY: Both strings are NUL-terminated and outlive this call.
     unsafe {
@@ -439,8 +429,8 @@ unsafe extern "system" fn wndproc(
                 let app = unsafe { GetWindowLongPtrW(hwnd, GWLP_USERDATA) } as *mut App;
                 if !app.is_null() {
                     // SAFETY: Single-threaded message loop; `app` points at the live App.
-                    if let Some(worker) = unsafe { &*app }.worker.as_ref() {
-                        let _ = worker.sender.try_send(Command::ResetAudio);
+                    if let Some(sender) = unsafe { &*app }.view_model.audio_sender() {
+                        let _ = sender.try_send(crate::core::audio::Command::ResetAudio);
                     }
                 }
             }
@@ -477,11 +467,6 @@ pub fn run(
     }
     let config = Config::load();
     let controls = Arc::new(Controls::default());
-    controls.profile.store(config.profile, Ordering::Relaxed);
-    controls
-        .mouse_profile
-        .store(config.mouse_profile, Ordering::Relaxed);
-    controls.volume.store(config.volume, Ordering::Relaxed);
     // Re-apply the saved choice if the Run key lost the value (reinstall, cleanup tool).
     if config.launch_at_login && login::status() != login::ENABLED {
         let _ = login::set_enabled(true);
@@ -493,6 +478,8 @@ pub fn run(
     } else {
         Some(Worker::start(sounds, controls.clone(), language)?)
     };
+    let persistence = Box::new(view_model::windows::Persistence::new(config));
+    let view_model = ViewModel::new(persistence, controls, worker, language, smoke_test);
 
     let instance = unsafe { GetModuleHandleW(None) }.map_err(|e| e.to_string())?;
     let class_name = wide("SoundyTrayWindow");
@@ -525,15 +512,14 @@ pub fn run(
 
     let mut app = App {
         hwnd,
-        config,
-        controls,
-        worker,
+        view_model,
         hook: None,
         tray: Tray::new(hwnd),
     };
     // SAFETY: `app` outlives every message dispatched below.
     unsafe { SetWindowLongPtrW(hwnd, GWLP_USERDATA, &mut app as *mut App as isize) };
-    app.tray.set_tip(language.text(Text::Tooltip));
+    app.tray
+        .set_tip(app.view_model.language().text(Text::Tooltip));
     if smoke_test {
         app.check_menu();
         // SAFETY: Destroys the window created above and ends the loop after `run` returns.
@@ -542,12 +528,13 @@ pub fn run(
         };
         return Ok(());
     }
-    let sender = app.worker.as_ref().map(|worker| worker.sender.clone());
-    match sender.map(|sender| InputHook::start(sender, language)) {
+    let sender = app.view_model.audio_sender();
+    match sender.map(|sender| InputHook::start(sender, app.view_model.language())) {
         Some(Ok(hook)) => app.hook = Some(hook),
         Some(Err(error)) => {
             eprintln!("Soundy: {error}");
-            app.tray.set_tip(language.text(Text::InputUnavailable));
+            app.tray
+                .set_tip(app.view_model.language().text(Text::InputUnavailable));
         }
         None => {}
     }
