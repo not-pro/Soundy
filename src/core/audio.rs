@@ -27,6 +27,7 @@ use crate::core::{
 };
 
 /// macOS uses a real `Sounds/` folder, so the bundled variant is not needed.
+#[derive(Clone)]
 pub enum Sounds {
     Files(PathBuf),
 }
@@ -161,7 +162,14 @@ impl Worker {
                                     mouse.sample_index(false).map(|index| (index, None))
                                 }
                                 Some(Command::ResetAudio) => {
-                                    if let Err(error) = audio.restart(language) {
+                                    if let Err(error) = audio.reset_with_retry(language) {
+                                        eprintln!("Soundy: {error}");
+                                    }
+                                    // Pre-load the active profiles so the next key press
+                                    // is not silent while the cache repopulates.
+                                    if let Err(error) =
+                                        audio.select_profiles(&root, profile, mouse, language, now)
+                                    {
                                         eprintln!("Soundy: {error}");
                                     }
                                     None
@@ -415,11 +423,25 @@ impl Player {
             .map_err(|e| format!("{}: {e}", language.text(Text::AudioOutputFailed)))
     }
 
-    /// Stops and restarts the engine; used after sleep and output changes,
-    /// when the render chain can come back in a broken state.
-    fn restart(&mut self, language: Language) -> Result<(), String> {
-        unsafe { self.engine.stop() };
+    /// Rebuilds the whole player from scratch; used after sleep and output
+    /// changes, when the render chain can come back in a broken state.
+    fn reset(&mut self, language: Language) -> Result<(), String> {
+        *self = Self::new();
         self.start(language)
+    }
+
+    fn reset_with_retry(&mut self, language: Language) -> Result<(), String> {
+        let mut last_error = None;
+        for _ in 0..5 {
+            match self.reset(language) {
+                Ok(()) => return Ok(()),
+                Err(error) => {
+                    last_error = Some(error);
+                    thread::sleep(Duration::from_millis(500));
+                }
+            }
+        }
+        Err(last_error.expect("at least one reset attempt"))
     }
 
     fn play(&mut self, index: usize, volume: u8, pan: Option<f32>) {

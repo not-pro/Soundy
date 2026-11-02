@@ -42,6 +42,9 @@ use crate::{
 
 const TRAY_MESSAGE: u32 = WM_APP + 1;
 const TRAY_ID: u32 = 1;
+const WM_POWERBROADCAST: u32 = 0x0218;
+const PBT_APMRESUMEAUTOMATIC: u32 = 0x0012;
+const PBT_APMRESUMESUSPEND: u32 = 0x0007;
 static MENU_OPEN: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 const MENU_KEYBOARD: u32 = 100;
@@ -428,6 +431,21 @@ unsafe extern "system" fn wndproc(
                 }
             }
             LRESULT(0)
+        }
+        WM_POWERBROADCAST => {
+            let event = wparam.0 as u32;
+            if matches!(event, PBT_APMRESUMEAUTOMATIC | PBT_APMRESUMESUSPEND) {
+                // SAFETY: `run` stores the address of a live App and clears it on destroy.
+                let app = unsafe { GetWindowLongPtrW(hwnd, GWLP_USERDATA) } as *mut App;
+                if !app.is_null() {
+                    // SAFETY: Single-threaded message loop; `app` points at the live App.
+                    if let Some(worker) = unsafe { &*app }.worker.as_ref() {
+                        let _ = worker.sender.try_send(Command::ResetAudio);
+                    }
+                }
+            }
+            // SAFETY: Default handling for power messages this window does not own.
+            unsafe { DefWindowProcW(hwnd, message, wparam, lparam) }
         }
         WM_DESTROY => {
             // SAFETY: Same window user data as above.

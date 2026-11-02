@@ -1,18 +1,15 @@
-## Soundy 2.1.0
+## Soundy 2.1.1
 
 ### English
 
-- **Truly portable Windows build.** `Soundy.exe` is now a single file: all 240 WAV sounds are compressed into the EXE and only the active keyboard/mouse profile is decompressed into memory. No separate `Sounds/` folder is required.
-- External `Sounds/` folder still works as an override for development or advanced users.
+- **Fixed audio after sleep and wake.** On both macOS and Windows, putting the computer to sleep and waking it up no longer leaves Soundy silent. The audio engine is now rebuilt automatically on resume, so you do not have to restart the app.
 
 ### Русский
 
-- **По-настоящему portable-сборка Windows.** `Soundy.exe` теперь один файл: все 240 WAV-звуков сжаты внутрь EXE, а в память распаковываются только звуки активного профиля клавиатуры и мыши. Отдельная папка `Sounds/` больше не нужна.
-- Внешняя папка `Sounds/` по-прежнему работает для отладки или опытных пользователей.
+- **Исправлен звук после сна и пробуждения.** Теперь на macOS и Windows после ухода компьютера в спящий режим и выхода из него Soundy продолжает работать. Аудиодвижок автоматически пересоздаётся при пробуждении, и перезапускать программу не нужно.
 
 ### 简体中文
 
-- **真正便携的 Windows 版本。** `Soundy.exe` 现在是一个单独的文件：全部 240 个 WAV 音效被压缩在 EXE 内部，只有当前键盘和鼠标配置所需的音效会被解压到内存中。不再需要单独的 `Sounds/` 文件夹。
-- 外部的 `Sounds/` 文件夹仍可作为覆盖，方便开发或高级用户使用。
+- **修复了睡眠唤醒后没有声音的问题。** 现在，在 macOS 和 Windows 上，电脑睡眠并唤醒后 Soundy 不会再保持静音。音频引擎会在恢复时自动重建，无需重启应用。
 
 Download the **PKG** for your Mac: **arm64** for Apple Silicon, **x86_64** for Intel. On Windows, use the portable **ZIP**. ZIP archives, signed update feeds, and SHA-256 checksums are included. Requires macOS 13 or later, or Windows 10 or later. The macOS app is self-signed, without Apple notarization.

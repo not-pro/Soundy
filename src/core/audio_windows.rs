@@ -38,16 +38,27 @@ impl Default for Controls {
 }
 
 pub enum Command {
-    Key { keycode: u16, at: Instant },
-    KeyUp { at: Instant },
-    Mouse { right: bool, at: Instant },
+    Key {
+        keycode: u16,
+        at: Instant,
+    },
+    KeyUp {
+        at: Instant,
+    },
+    Mouse {
+        right: bool,
+        at: Instant,
+    },
     Preview,
     PreviewMouse,
+    /// Restart the device sink after sleep or an output-device change.
+    ResetAudio,
     Stop,
 }
 
 /// Source of WAV samples: either a `Sounds/` folder on disk or a bundled,
 /// compressed archive embedded in the EXE.
+#[derive(Clone)]
 pub enum Sounds {
     Files(PathBuf),
     Bundled(Arc<crate::core::bundle::Cache>),
@@ -136,6 +147,15 @@ impl Worker {
                         }
                         Some(Command::Preview) => profile.sample_index(0),
                         Some(Command::PreviewMouse) => mouse.sample_index(false),
+                        Some(Command::ResetAudio) => {
+                            if let Err(error) = audio.reset_with_retry(language) {
+                                eprintln!("Soundy: {error}");
+                            }
+                            // Pre-load the active profiles so the next key press
+                            // is not silent while the bundle cache repopulates.
+                            audio.sounds.ensure(profile, mouse);
+                            None
+                        }
                         _ => None,
                     };
                     if let Some(index) = index {
@@ -203,6 +223,25 @@ impl Audio {
             last_variant: vec![None; catalog::files().count()],
             random: variation::Random::new(),
         })
+    }
+
+    fn reset(&mut self, language: Language) -> Result<(), String> {
+        *self = Self::new(self.sounds.clone(), language)?;
+        Ok(())
+    }
+
+    fn reset_with_retry(&mut self, language: Language) -> Result<(), String> {
+        let mut last_error = None;
+        for _ in 0..5 {
+            match self.reset(language) {
+                Ok(()) => return Ok(()),
+                Err(error) => {
+                    last_error = Some(error);
+                    thread::sleep(Duration::from_millis(500));
+                }
+            }
+        }
+        Err(last_error.expect("at least one reset attempt"))
     }
 
     fn play(&mut self, index: usize, volume: u8) {
